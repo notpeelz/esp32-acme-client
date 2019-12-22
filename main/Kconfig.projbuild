@@ -1,0 +1,27 @@
+menu "ESP-Alarm Configuration"
+
+config OTA_URL
+  string "Secure boot file URL"
+
+config FTP_WEBSERVER_IP
+  string "IP Address of our webserver"
+
+config FTP_WEBSERVER_PATH
+  string "Path to served files"
+
+config FTP_WEBSERVER_FTPUSER
+  string "Userid for the FTP server"
+
+config FTP_WEBSERVER_FTPPASS
+  string "Password for the FTP server"
+
+config ACME_EMAIL_ADDRESS
+  string "Email address passed to ACME server"
+
+config ACME_SERVER_URL
+  string "ACME server URL"
+
+config ACME_USER_KEY_FILE
+  string "ACME user key file"
+
+endmenu
