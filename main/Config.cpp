@@ -24,7 +24,7 @@
 #include "Config.h"
 #include "secrets.h"
 #include <ArduinoJson.h>
-// #include "Default.h"
+#include "Default.h"
 
 Config::Config(String mac) {
   name = 0;

@@ -80,11 +80,7 @@ class Acme {
     const char *new_account_template =
       "{\n  \"termsOfServiceAgreed\": true,\n  \"contact\": [\n    \"%s\"\n  ],\n  \"onlyReturnExisting\": %s\n}";
     const char *new_account_template_no_email = "{\n  \"termsOfServiceAgreed\": true,\n  \"resource\": [\n    \"new-reg\"\n  ]\n}";
-
-    // const char *server_uri = "https://acme-staging-v02.api.letsencrypt.org/directory";	// ACME v2 staging environment, high rate limits for testing
-    // const char *server_uri = "https://acme-v02.api.letsencrypt.org/directory";		// Production environment
-    // const char *server_uri = "https://192.168.0.228:14000/dir";					// Pebble
-    const char *server_uri = "https://192.168.0.228/dir";					// Pebble
+    const char *new_order_template = "{\n  \"identifiers\": [\n    {\n      \"type\": \"dns\", \"value\": \"%s\"\n    }\n  ]\n}";
 
     void	StoreFileOnWebserver(char *localfn, char *remotefn);
     char	*Base64(const char *);
@@ -119,10 +115,10 @@ class Acme {
     boolean	ReadOrderInfo();
     void	WriteOrderInfo();
     void	ReadOrder(JsonObject &);
-    void	ValidateOrder();
-    void	ValidateOrderFTP();
+    boolean	ValidateOrder();
+    boolean	ValidateOrderFTP();
     void	ValidateOrderLocal();
-    void	ValidateAlertServer();
+    boolean	ValidateAlertServer();
     int		http01_ix;
 
     void	DownloadAuthorizationResource();
@@ -130,6 +126,12 @@ class Acme {
     char	*JWSThumbprint();
     void	ReadChallenge(JsonObject &);
     const char *well_known = "/.well-known/acme-challenge/";
+    boolean	ReadAuthorizationReply(JsonObject &json);
+
+    void	FinalizeOrder();
+    void	ReadCertificate();
+    void	ReadFinalizeReply(JsonObject &json);
+    char	*GenerateCSR();
 
     void	SetAcmeUserAgentHeader(esp_http_client_handle_t);
 
@@ -141,16 +143,7 @@ class Acme {
     /*
      * ACME Protocol data definitions
      */
-#if 0					// We don't need this
-    struct Meta {			// See ACME RFC § 7.1.1
-      char **caaIdentities;
-      char *termsOfService;
-      char *website;
-      boolean externalAccountRequired;
-    };
-#endif
     struct Directory {
-//      Meta *meta;
       char	*newAccount,
 		*newNonce,
 		*newOrder,
@@ -163,11 +156,8 @@ class Acme {
       char *status;
       char **contact;
       boolean termsOfServiceAgreed;
-      // void externalAccountBinding;	// ?
       char *orders;
-      // FIX ME huh ?
       char	*key_type, *key_id, *key_e;
-      // char	*key;
       char	*initialIp,
 		*createdAt;
     };
@@ -182,7 +172,6 @@ class Acme {
       Identifier *identifiers;
       char *notBefore;
       char *notAfter;
-      // void error;			// ?
       char **authorizations;
       char *finalize;
       char *certificate;
@@ -218,14 +207,8 @@ class Acme {
     mbedtls_rsa_context		*rsa;
     mbedtls_ctr_drbg_context	*ctr_drbg;
     mbedtls_entropy_context	*entropy;
-    // mbedtls_pk_context		key;
     mbedtls_pk_context		*pkey;
     mbedtls_md_context_t	mdctx;
-
-    void TestRfc7515();
-    void FakeNewAccountCall();
-    void FakeNewAccountCall1();
-    void FakeNewAccountCall2();
 };
 
 extern Acme *acme;

@@ -41,6 +41,7 @@
 #include <lwip/etharp.h>
 #include <mbedtls/base64.h>
 #include <mbedtls/sha1.h>
+#include <mbedtls/x509_csr.h>
 #include <esp_http_client.h>
 #include <FtpClient.h>
 
@@ -138,9 +139,20 @@ void Acme::NetworkConnected(void *ctx, system_event_t *event) {
     WriteOrderInfo();
   }
 
+  ESP_LOGI(acme_tag, "%s : order status %s", __FUNCTION__, order->status);
+
+  boolean valid = false;
   // If we have an order that needs verifying, do so.
-  if (order && order->status && strcmp(order->status, "pending") == 0) {
-    ValidateOrder();
+  if (order && order->status) {
+    if (strcmp(order->status, "valid") == 0) {
+      valid = true;
+    } else if (strcmp(order->status, "pending") == 0) {
+      valid = ValidateOrder();
+    }
+  }
+
+  if (valid) {
+    FinalizeOrder();
   }
 
   // CleanupAcmeDirectory();
@@ -259,12 +271,15 @@ char *Acme::Base64(const char *s, int len) {
  *
  * Some of the relevant parts of RFC 8555 (§6.2) :
  *   It must have the fields "alg", "nonce", "url", and either "jwk" or "kid".
- *   newAccount and revokeCert messages must use jwk, this field must contain the public key corresponding to the private key used to sign the JWS.
- *   All other requests are signed using an existing account, and there must be a kid field which contains the account URL received by POSTing to newAcount.
+ *   newAccount and revokeCert messages must use jwk, this field must contain the public key
+ *   corresponding to the private key used to sign the JWS.
+ *   All other requests are signed using an existing account, and there must be a kid field
+ *   which contains the account URL received by POSTing to newAcount.
  *
  * So this must only be used in newAccount or revokeCert.
  *
- * {"url": "https://acme-staging-v02.api.letsencrypt.org/acme/new-acct", "jwk": {"kty": "RSA", "n": "...", "e": "AQAB"}, "alg": "ES256", "nonce": "U8b_2ZGRATuySa9yPOF3JDN4JXTyEdAfrL--WTzqYKQ"}
+ * {"url": "https://acme-staging-v02.api.letsencrypt.org/acme/new-acct", "jwk": {"kty": "RSA",
+ *  "n": "...", "e": "AQAB"}, "alg": "ES256", "nonce": "U8b_2ZGRATuySa9yPOF3JDN4JXTyEdAfrL--WTzqYKQ"}
  */
 char *Acme::MakeMessageJWK(char *url, char *payload, char *jwk) {
   ESP_LOGD(acme_tag, "%s(%s,%s,%s)", __FUNCTION__, url, payload, jwk);
@@ -584,6 +599,11 @@ void Acme::setLocation(const char *s) {
  * Manage private key
  */
 boolean Acme::GeneratePrivateKey() {
+  /*
+   * FIXME this doesn't work yet
+   */
+  #warning "broken"
+
   int ret;
   char buf[80];
 
@@ -761,16 +781,6 @@ void Acme::RequestNewAccount(const char *contact) {
   }
 
   ReadAccount(root);
-#if 0
-  const char *reply_key_kty = root["key"]["kty"];
-  const char *reply_key_n = root["key"]["n"];
-  const char *reply_key_e = root["key"]["e"];
-  const char *reply_initialIp = root["initialIp"];
-  const char *reply_createdAt = root["createdAt"];
-
-  ESP_LOGI(acme_tag, "%s: key kty %s n %s e %s", __FUNCTION__, reply_key_kty, reply_key_n, reply_key_e);
-  ESP_LOGI(acme_tag, "%s: key initialIp %s createdAt %s", __FUNCTION__, reply_initialIp, reply_createdAt);
-#endif
 
   free(reply);
   return;
@@ -787,15 +797,14 @@ void Acme::ReadAccount(JsonObject &json) {
  * by a macro invocation to protect against calling strdup(0) if an element is not in the JSON.
  * C/C++ syntax hint : #x turns the macro argument x into a string.
  */
-// #define BZZ(x)		BZZ2(x, x)
 #define	BZZ(x)									\
   {										\
     const char *x = json[#x];							\
     if (x) {									\
-      ESP_LOGI(acme_tag, "%s : read %s as %s", __FUNCTION__, #x, x);		\
+      ESP_LOGD(acme_tag, "%s : read %s as %s", __FUNCTION__, #x, x);		\
       account->x = strdup(x);							\
     } else {									\
-      ESP_LOGI(acme_tag, "%s : no %s read", __FUNCTION__, #x);			\
+      ESP_LOGD(acme_tag, "%s : no %s read", __FUNCTION__, #x);			\
       account->x = 0;								\
     }										\
   }
@@ -812,7 +821,7 @@ void Acme::ReadAccount(JsonObject &json) {
 #define	BZZ2(x,y)								\
   {										\
     const char *x = json["key"][#y];						\
-    ESP_LOGI(acme_tag, "%s: read %s as %s", __FUNCTION__, #y, x);		\
+    ESP_LOGD(acme_tag, "%s: read %s as %s", __FUNCTION__, #y, x);		\
     if (x)									\
       account->x = strdup(x);							\
     else									\
@@ -832,7 +841,7 @@ void Acme::ReadAccount(JsonObject &json) {
 #undef BZZ2
 
   JsonArray &jca = json["contact"];
-  ESP_LOGI(acme_tag, "%s : %d contacts", __FUNCTION__, jca.size());
+  ESP_LOGD(acme_tag, "%s : %d contacts", __FUNCTION__, jca.size());
   account->contact = (char **)calloc(jca.size()+1, sizeof(char *));
   account->contact[jca.size()] = 0;
   for (int i=0; i<jca.size(); i++) {
@@ -902,10 +911,10 @@ boolean Acme::ReadAccountInfo() {
     inc = fread((void *)(buffer + total), 1, NREAD_INC, f);
     total += inc;
     buffer[total] = 0;
-    ESP_LOGI(acme_tag, "Reading -> %d bytes, total %d ", inc, total);
+    ESP_LOGD(acme_tag, "Reading -> %d bytes, total %d ", inc, total);
   }
   fclose(f);
-  ESP_LOGI(acme_tag, "JSON account %s", buffer);
+  ESP_LOGD(acme_tag, "JSON account %s", buffer);
 
   DynamicJsonBuffer jb;
   JsonObject &root = jb.parseObject(buffer);
@@ -914,7 +923,7 @@ boolean Acme::ReadAccountInfo() {
     free(buffer);
     return false;
   }
-  ESP_LOGI(acme_tag, "%s : JSON opened", __FUNCTION__);
+  ESP_LOGD(acme_tag, "%s : JSON opened", __FUNCTION__);
   ReadAccount(root);
 
   free(buffer);
@@ -987,8 +996,6 @@ void Acme::RequestNewOrder(const char *url) {
     return;
 
   char *msg;
-  // const char *new_order_template = "{\n  \"identifiers\": [\n    {\n      \"value\": \"%s\",\n      \"type\": \"dns\"\n    }\n  ]\n}";
-  const char *new_order_template = "{\n  \"identifiers\": [\n    {\n      \"type\": \"dns\", \"value\": \"%s\"\n    }\n  ]\n}";
   char *request = (char *)malloc(strlen(new_order_template) + strlen(url) + 4);
   sprintf(request, new_order_template, url);
   ESP_LOGI(acme_tag, "%s msg %s", __FUNCTION__, request);
@@ -1089,10 +1096,12 @@ boolean Acme::ReadOrderInfo() {
     free(buffer);
     return false;
   }
-  ESP_LOGI(acme_tag, "%s : JSON opened", __FUNCTION__);
+
+  ESP_LOGD(acme_tag, "%s : JSON opened", __FUNCTION__);
   ReadOrder(root);
 
   free(buffer);
+  ESP_LOGI(acme_tag, "%s : success", __FUNCTION__);
   return true;
 }
 
@@ -1133,7 +1142,6 @@ void Acme::WriteOrderInfo() {
   for (int i=0; order->authorizations[i]; i++)
     jaa.add(order->authorizations[i]);
 
-
   char *output = (char *)malloc(1536);	// FIX ME
   jo.printTo(output, 1536);		// FIX ME
 
@@ -1145,32 +1153,6 @@ void Acme::WriteOrderInfo() {
 }
 
 /*
- * I (10541) Acme: HttpEvent: header Server value nginx
- * I (10541) Acme: HttpEvent: header Date value Wed, 18 Dec 2019 19:45:30 GMT
- * I (10551) Acme: HttpEvent: header Content-Type value application/json
- * I (10551) Acme: HttpEvent: header Content-Length value 362
- * I (10561) Acme: HttpEvent: header Connection value keep-alive
- * I (10561) Acme: HttpEvent: header Boulder-Requester value 11649655
- * I (10571) Acme: HttpEvent: header Cache-Control value public, max-age=0, no-cache
- * I (10581) Acme: HttpEvent: header Link value <https://acme-staging-v02.api.letsencrypt.org/directory>;rel="index"
- * I (10591) Acme: HttpEvent: header Location value https://acme-staging-v02.api.letsencrypt.org/acme/order/11649655/66353136
- * I (10601) Acme: HttpEvent: header Replay-Nonce value 0002amFatTUGJf4a0NZ45tlY_df4q67TrcjfDrWXDAecMwQ
- * I (10611) Acme: HttpEvent: header X-Frame-Options value DENY
- * I (10621) Acme: HttpEvent: header Strict-Transport-Security value max-age=604800
- * I (10631) Acme: PerformWebQuery -> {
- *   "status": "pending",
- *   "expires": "2019-12-25T19:45:30.769623702Z",
- *   "identifiers": [
- *     {
- *       "type": "dns",
- *       "value": "dannybackx.hopto.org"
- *     }
- *   ],
- *   "authorizations": [
- *     "https://acme-staging-v02.api.letsencrypt.org/acme/authz-v3/27860565"
- *   ],
- *   "finalize": "https://acme-staging-v02.api.letsencrypt.org/acme/finalize/11649655/66353136"
- * }
  */
 void Acme::ReadOrder(JsonObject &json) {
   order = (Order *)malloc(sizeof(Order));
@@ -1184,13 +1166,13 @@ void Acme::ReadOrder(JsonObject &json) {
  */
 #define	BZZ(x)									\
   {										\
-    ESP_LOGI(acme_tag, "%s : reading %s", __FUNCTION__, #x);			\
+    ESP_LOGD(acme_tag, "%s : reading %s", __FUNCTION__, #x);			\
     const char *x = json[#x];							\
     if (x) {									\
-      ESP_LOGI(acme_tag, "%s : read %s as %s", __FUNCTION__, #x, x);		\
+      ESP_LOGD(acme_tag, "%s : read %s as %s", __FUNCTION__, #x, x);		\
       order->x = strdup(x);							\
     } else {									\
-      ESP_LOGI(acme_tag, "%s : no %s read", __FUNCTION__, #x);			\
+      ESP_LOGD(acme_tag, "%s : no %s read", __FUNCTION__, #x);			\
       order->x = 0;								\
     }										\
   }
@@ -1198,7 +1180,7 @@ void Acme::ReadOrder(JsonObject &json) {
 #define	BZZ2(x,y)								\
   {										\
     const char *x = json["key"][#y];						\
-    ESP_LOGI(acme_tag, "%s: read %s as %s", __FUNCTION__, #y, x);		\
+    ESP_LOGD(acme_tag, "%s: read %s as %s", __FUNCTION__, #y, x);		\
     if (x)									\
       order->x = strdup(x);							\
     else									\
@@ -1213,7 +1195,7 @@ void Acme::ReadOrder(JsonObject &json) {
 #undef BZZ2
 
   JsonArray &jia = json["identifiers"];
-  ESP_LOGI(acme_tag, "%s : %d identifiers", __FUNCTION__, jia.size());
+  ESP_LOGD(acme_tag, "%s : %d identifiers", __FUNCTION__, jia.size());
   order->identifiers = (Identifier *)calloc(jia.size()+1, sizeof(Identifier));
   order->identifiers[jia.size()]._type = 0;
   order->identifiers[jia.size()].value = 0;
@@ -1225,7 +1207,7 @@ void Acme::ReadOrder(JsonObject &json) {
   }
 
   JsonArray &jaa = json["authorizations"];
-  ESP_LOGI(acme_tag, "%s : %d authorizations", __FUNCTION__, jaa.size());
+  ESP_LOGD(acme_tag, "%s : %d authorizations", __FUNCTION__, jaa.size());
   order->authorizations = (char **)calloc(jia.size()+1, sizeof(char *));
   order->authorizations[jaa.size()] = 0;
   for (int i=0; i<jaa.size(); i++) {
@@ -1238,12 +1220,12 @@ void Acme::ReadOrder(JsonObject &json) {
  *
  *
  */
-void Acme::ValidateOrder() {
+boolean Acme::ValidateOrder() {
   /*
    * This implements a model for one or more IoT devices behind a NAT firewall.
    * We need some FTP server to store the credentials on for authorization.
    */
-  ValidateOrderFTP();
+  return ValidateOrderFTP();
 
   /*
    * If we have globally reachable IoT devices, not behind a NAT firewall, then you would need a local
@@ -1254,7 +1236,9 @@ void Acme::ValidateOrder() {
 }
 
 // Store a file on an FTP server
-void Acme::ValidateOrderFTP() {
+boolean Acme::ValidateOrderFTP() {
+  ESP_LOGI(acme_tag, "%s", __FUNCTION__);
+
   // This uses a common (non-IoT) web server on which we can store a file. Use for cases with e.g. several IoT devices.
   // void Acme::StoreFileOnWebserver(char *localfn, char *remotefn);
   DownloadAuthorizationResource();
@@ -1269,7 +1253,7 @@ void Acme::ValidateOrderFTP() {
   }
   if (token == 0) {
     ESP_LOGE(acme_tag, "%s: no http-01 token found, aborting authorization", __FUNCTION__);
-    return;
+    return false;
   }
   ESP_LOGD(acme_tag, "%s: token %s", __FUNCTION__, token);
 
@@ -1283,7 +1267,7 @@ void Acme::ValidateOrderFTP() {
   if (! CreateValidationFile(localfn, token)) {
     ESP_LOGE(acme_tag, "%s: could not create local validation file %s", __FUNCTION__, localfn);
     free(localfn);
-    return;
+    return false;
   }
 
   // FTP the file
@@ -1294,12 +1278,13 @@ void Acme::ValidateOrderFTP() {
   free(remotefn);
 
   // Alert the server
-  ValidateAlertServer();
+  boolean r = ValidateAlertServer();
 
   // Remove the file
   // FIXME Can't find a API call (except when accessing SPIFFS) to remove a file in the ESP-IDF VFS layer
 
   free(localfn);
+  return r;
 }
 
 // We're reachable from the internet directly
@@ -1310,10 +1295,11 @@ void Acme::ValidateOrderLocal() {
  * Send a request to the server to read our token
  * We're only implementing the http-01 protocol here...
  */
-void Acme::ValidateAlertServer() {
+boolean Acme::ValidateAlertServer() {
+  ESP_LOGI(acme_tag, "%s", __FUNCTION__);
   if (http01_ix < 0) {
     ESP_LOGE(acme_tag, "%s: no http-01 found", __FUNCTION__);
-    return;
+    return false;
   }
 
   char *msg = MakeMessageKID(challenge->challenges[http01_ix].url, "{}");
@@ -1336,7 +1322,7 @@ void Acme::ValidateAlertServer() {
   if (! root.success()) {
     ESP_LOGE(acme_tag, "%s : could not parse JSON", __FUNCTION__);
     free(reply);
-    return;
+    return false;
   }
   ESP_LOGD(acme_tag, "%s : JSON opened", __FUNCTION__);
 
@@ -1348,15 +1334,82 @@ void Acme::ValidateAlertServer() {
     ESP_LOGE(acme_tag, "%s: failure %s %s %s", __FUNCTION__, reply_status, reply_type, reply_detail);
 
     free(reply);
-    return;
+    return false;
   } else if (reply_status == 0) {
     ESP_LOGE(acme_tag, "%s: null reply_status", __FUNCTION__);
   } else {
     ESP_LOGI(acme_tag, "%s: reply_status %s", __FUNCTION__, reply_status);
   }
 
-  // ReadChallenge(root);
   free(reply);
+
+  if (ReadAuthorizationReply(root)) {
+    return true;
+  } else {
+    ESP_LOGE(acme_tag, "%s: failing", __FUNCTION__);
+    return false;
+  }
+}
+
+void Acme::ReadCertificate() {
+}
+
+/*
+ * Fetch the result of an Authorization. If valid, then we can move ahead with certificate download.
+ *
+ * We're not storing this info into a structure similar to the message content. Rather, we're
+ * using this info to match with our existing Order structure, and update it.
+ *
+ * {
+ *   "type": "http-01",
+ *   "status": "valid",
+ *   "url": "https://acme-staging-v02.api.letsencrypt.org/acme/chall-v3/28523991/ZQYjMg",
+ *   "token": "XNmOzvEOv57hbpXC7kbZMEAjy1HiLT6g_opkKG7XUaY",
+ *   "validationRecord": [
+ *     {
+ *       "url": "http://dannybackx.hopto.org/.well-known/acme-challenge/XNmOzvEOv57hbpXC7kbZMEAjy1HiLT6g_opkKG7XUaY",
+ *       "hostname": "dannybackx.hopto.org",
+ *       "port": "80",
+ *       "addressesResolved": [
+ *         "94.224.125.18"
+ *       ],
+ *       "addressUsed": "94.224.125.18"
+ *     }
+ *   ]
+ * }
+ */
+boolean Acme::ReadAuthorizationReply(JsonObject &json) {
+  // const char *_type = json["type"];
+  const char *status = json["status"];
+  // const char *url = json["url"];	// Not used
+  // const char *token = json["token"];
+
+  if (strcmp(status, "valid") != 0) {
+    return false;
+  }
+#if 1
+  free(order->status);
+  order->status = strdup(status);
+  WriteOrderInfo();
+  return true;
+#else
+  // This only works well if we have all these structures filled....
+
+  if (order == 0 || challenge == 0 || challenge->challenges == 0) {
+    return false;
+  }
+
+  for (int i=0; challenge->challenges[i]._type; i++) {
+    if (strcmp(challenge->challenges[i]._type, _type) == 0) {
+      if (strcmp(challenge->challenges[i].token, token) == 0) {
+        free(order->status);
+	order->status = strdup(status);
+	return true;
+      }
+    }
+  }
+#endif
+  return false;
 }
 
 /*
@@ -1381,6 +1434,7 @@ void Acme::ValidateAlertServer() {
  *    }
  */
 void Acme::DownloadAuthorizationResource() {
+  ESP_LOGI(acme_tag, "%s", __FUNCTION__);
   if (order == 0 || order->authorizations == 0 || order->authorizations[0] == 0) {
     ESP_LOGE(acme_tag, "%s: null", __FUNCTION__);
     return;
@@ -1458,28 +1512,16 @@ char *Acme::JWSThumbprint() {
 
   // White-space-less JWK format, as described
   const char *format = "{\"e\":\"%s\",\"kty\":\"RSA\",\"n\":\"%s\"}";
-  // ESP_LOGI(acme_tag, "malloc(%d+%d+%d+4)", strlen(format), nl, ne);
   char *t = (char *)malloc(strlen(format) + 2 * nl + ne + 4);		// hack : 2*, otherwise crash due to alloc(280), but use 370
   sprintf(t, format, e64, n64);
-  // ESP_LOGI(acme_tag, "-> strlen %d", strlen(t));
-  // char *r = Base64(t);
   free(N);
   free(n64);
   free(e64);
-
-  // ESP_LOGI(acme_tag, "Calloc(2, %d)", mbedtls_pk_get_len(pkey));
-  // unsigned char *signature = (unsigned char *)calloc(2, mbedtls_pk_get_len(pkey));	// hack ?
-  // if (! signature) {
-  //   ESP_LOGE(acme_tag, "calloc failed, mbedtls_pk_get_len %d", mbedtls_pk_get_len(pkey));
-  //   free(t);
-  //   return 0;
-  // }
 
   int hash_size = 32;
   unsigned char *hash = (unsigned char *)calloc(1, hash_size);
   if (hash == 0) {
     ESP_LOGE(acme_tag, "calloc(32) failed");
-    // free(signature);
     free(t);
     return 0;
   }
@@ -1487,7 +1529,6 @@ char *Acme::JWSThumbprint() {
   const mbedtls_md_info_t *mdi = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
   if (!mdi) {
     ESP_LOGE("Acme", "mbedtls_hash_get_len: md_info not found");
-    // free(signature);
     free(hash);
     free(t);
     return 0;
@@ -1499,13 +1540,10 @@ char *Acme::JWSThumbprint() {
     char buf[80];
     mbedtls_strerror(ret, buf, sizeof(buf));
     ESP_LOGE(acme_tag, "mbedtls_md failed %s (0x%04x)", buf, -ret);
-    // free(signature);
     free(hash);
     return 0;
   }
-  // Step missing w.r.t. Acme::Signature(), FIX ME (_sign) ?
 
-  // free(signature);
   char *r = Base64((char *)hash, hash_size);
   free(hash);
   return r;
@@ -1520,7 +1558,6 @@ bool Acme::CreateValidationFile(const char *localfn, const char *token) {
   }
 
   fprintf(tf, "%s.%s\n", token, JWSThumbprint());
-  // fprintf(tf, "%s\n", token);
 
   fclose(tf);
   return true;
@@ -1582,13 +1619,16 @@ void Acme::ReadChallenge(JsonObject &json) {
  *
  * Some of the relevant parts of RFC 8555 (§6.2) :
  *   It must have the fields "alg", "nonce", "url", and either "jwk" or "kid".
- *   newAccount and revokeCert messages must use jwk, this field must contain the public key corresponding to the private key used to sign the JWS.
- *   All other requests are signed using an existing account, and there must be a kid field which contains the account URL received by POSTing to newAcount.
+ *   newAccount and revokeCert messages must use jwk, this field must contain the public key
+ *   corresponding to the private key used to sign the JWS.
+ *   All other requests are signed using an existing account, and there must be a kid field
+ *   which contains the account URL received by POSTing to newAcount.
  *
  * So this must be used in calls to RequestNewOrder, ... .
  * but especially not in calls to newAccount or revokeCert.
  *
- * {"url": "https://acme-staging-v02.api.letsencrypt.org/acme/new-acct", "jwk": {"kty": "RSA", "n": "...", "e": "AQAB"}, "alg": "RS256", "nonce": "U8b_2ZGRATuySa9yPOF3JDN4JXTyEdAfrL--WTzqYKQ"}
+ * {"url": "https://acme-staging-v02.api.letsencrypt.org/acme/new-acct", "jwk": {"kty": "RSA",
+ *  "n": "...", "e": "AQAB"}, "alg": "RS256", "nonce": "U8b_2ZGRATuySa9yPOF3JDN4JXTyEdAfrL--WTzqYKQ"}
  */
 char *Acme::MakeMessageKID(const char *url, const char *payload) {
   ESP_LOGI(acme_tag, "%s(%s,%s)", __FUNCTION__, url, payload);
@@ -1630,15 +1670,11 @@ void Acme::SetAcmeUserAgentHeader(esp_http_client_handle_t client) {
 char *Acme::MakeProtectedKID(const char *query) {
   if (location == 0 || nonce == 0)
     return 0;
-#if 0
-  const char *acme_protected_template = "{\"alg\": \"RS256\", \"nonce\": \"%s\", \"kid\": \"%s\", \"url\": \"%s\"}";
-  char *request = (char *)malloc(strlen(acme_protected_template) + strlen(query) + strlen(nonce) + strlen(location) + 4);
-  sprintf(request, acme_protected_template, nonce, location, query);
-#else
+
   const char *acme_protected_template = "{\"alg\": \"RS256\", \"nonce\": \"%s\", \"url\": \"%s\", \"kid\": \"%s\"}";
   char *request = (char *)malloc(strlen(acme_protected_template) + strlen(query) + strlen(nonce) + strlen(location) + 4);
   sprintf(request, acme_protected_template, nonce, query, location);
-#endif
+
   return request;
 }
 
@@ -1759,13 +1795,11 @@ esp_err_t Acme::HttpEvent(esp_http_client_event_t *event) {
   const char *acme_nonce_header = "Replay-Nonce";
   const char *acme_location_header = "Location";
 
-  // ESP_LOGD("Acme", "%s: event id %d", __FUNCTION__, event->event_id);
-
   switch (event->event_id) {
   default:
     break;
   case HTTP_EVENT_ON_HEADER:
-    ESP_LOGD("Acme", "%s: header %s value %s", __FUNCTION__, event->header_key, event->header_value);
+    ESP_LOGI("Acme", "%s: header %s value %s", __FUNCTION__, event->header_key, event->header_value);
     if (strcmp(event->header_key, acme_nonce_header) == 0)
       acme->setNonce(event->header_value);
     else if (strcmp(event->header_key, acme_location_header) == 0)
@@ -1876,17 +1910,135 @@ void Acme::OrderStart() {
     WriteOrderInfo();
   }
 
+  ESP_LOGI(acme_tag, "%s : order status %s", __FUNCTION__, order->status);
+
+  boolean valid = false;
   // If we have an order that needs verifying, do so.
-  if (order && order->status && strcmp(order->status, "pending") == 0) {
-    ValidateOrder();
+  if (order && order->status) {
+    if (strcmp(order->status, "valid") == 0) {
+      valid = true;
+    } else if (strcmp(order->status, "pending") == 0) {
+      ESP_LOGI(acme_tag, "%s : Order pending -> calling ValidateOrder() (line %d)", __FUNCTION__, __LINE__);
+      valid = ValidateOrder();
+    }
+  }
+
+  if (valid) {
+    FinalizeOrder();
   }
 }
 
 void Acme::ChallengeStart() {
   RequestNewNonce();
 
+  boolean valid = false;
   // If we have an order that needs verifying, do so.
-  if (order && order->status && strcmp(order->status, "pending") == 0) {
-    ValidateOrder();
+  if (order && order->status) {
+    if (strcmp(order->status, "valid") == 0) {
+      valid = true;
+    } else if (strcmp(order->status, "pending") == 0) {
+      ESP_LOGI(acme_tag, "%s : Order pending -> calling ValidateOrder() (line %d)", __FUNCTION__, __LINE__);
+      valid = ValidateOrder();
+    }
   }
+
+  if (valid) {
+    FinalizeOrder();
+  }
+}
+
+char *Acme::GenerateCSR() {
+  const int buflen = 4096;	// This is used in mbedtls_x509 functions internally
+  int ret;
+
+  mbedtls_x509write_csr	req;
+  memset(&req, 0, sizeof(req));
+  mbedtls_x509write_csr_init(&req);
+
+  mbedtls_x509write_csr_set_md_alg(&req, MBEDTLS_MD_SHA256);
+  // mbedtls_x509write_csr_set_key_usage(&req, MBEDTLS_X509_NS_CERT_TYPE_SSL_CLIENT);	// Not set by default
+  mbedtls_x509write_csr_set_key(&req, pkey);
+  ret = mbedtls_x509write_csr_set_subject_name(&req, config->acmeUrl());
+  if (ret != 0) {
+    char buf[80];
+    mbedtls_strerror(ret, buf, sizeof(buf));
+    ESP_LOGE(acme_tag, "%s: mbedtls_x509write_csr_set_subject_name failed %s (0x%04x)", __FUNCTION__, buf, -ret);
+    mbedtls_x509write_csr_free(&req);
+    return 0;
+  }
+
+  unsigned char *buffer = (unsigned char *)malloc(buflen);
+  memset(buffer, 0, buflen);
+
+  // Note this requires a change to the function: it should malloc(4096) instead of allocating this directly.
+  ret = mbedtls_x509write_csr_pem(&req, buffer, buflen, mbedtls_ctr_drbg_random, ctr_drbg);
+  if (ret != 0) {
+    char buf[80];
+    mbedtls_strerror(ret, buf, sizeof(buf));
+    ESP_LOGE(acme_tag, "%s: mbedtls_x509write_csr_pem failed %s (0x%04x)", __FUNCTION__, buf, -ret);
+    mbedtls_x509write_csr_free(&req);
+    free((void *)buffer);
+    return 0;
+  }
+
+  ESP_LOGI(acme_tag, "%s: csr %s", __FUNCTION__, buffer);
+
+  char *csr = Base64((char *)buffer);
+  free((void *)buffer);
+  mbedtls_x509write_csr_free(&req);
+
+  return csr;
+}
+
+void Acme::FinalizeOrder() {
+
+  if (order == 0 || order->finalize == 0) {
+    ESP_LOGE(acme_tag, "%s: null", __FUNCTION__);
+    return;
+  }
+  ESP_LOGI(acme_tag, "%s(%s)", __FUNCTION__, order->finalize);
+
+  char *csr = GenerateCSR();
+  char *msg = MakeMessageKID(order->finalize, csr);
+  ESP_LOGI(acme_tag, "%s : msg %s", __FUNCTION__, msg);
+  char *reply = PerformWebQuery(order->finalize, msg, "application/jose+json");
+  free(csr);
+
+  free(msg);
+  if (reply) {
+    ESP_LOGI(acme_tag, "%s: PerformWebQuery -> %s", __FUNCTION__, reply);
+  } else {
+    ESP_LOGE(acme_tag, "%s: PerformWebQuery -> null", __FUNCTION__);
+  }
+
+  // Decode JSON reply
+  DynamicJsonBuffer jb;
+  JsonObject &root = jb.parseObject(reply);
+  if (! root.success()) {
+    ESP_LOGE(acme_tag, "%s : could not parse JSON", __FUNCTION__);
+    free(reply);
+    return;
+  }
+  ESP_LOGD(acme_tag, "%s : JSON opened", __FUNCTION__);
+
+  const char *reply_status = root["status"];
+  if (reply_status && reply_status[0] == '4') {
+    const char *reply_type = root["type"];
+    const char *reply_detail = root["detail"];
+
+    ESP_LOGE(acme_tag, "%s: failure %s %s %s", __FUNCTION__, reply_status, reply_type, reply_detail);
+
+    free(reply);
+    return;
+  } else if (reply_status == 0) {
+    ESP_LOGE(acme_tag, "%s: null reply_status", __FUNCTION__);
+  } else {
+    ESP_LOGD(acme_tag, "%s: reply_status %s", __FUNCTION__, reply_status);
+  }
+
+  ReadFinalizeReply(root);
+  free(reply);
+}
+
+void Acme::ReadFinalizeReply(JsonObject &json) {
 }
