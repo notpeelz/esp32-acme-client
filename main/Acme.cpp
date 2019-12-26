@@ -2032,10 +2032,14 @@ void Acme::FinalizeOrder() {
   ESP_LOGI(acme_tag, "%s(%s)", __FUNCTION__, order->finalize);
 
   char *csr = GenerateCSR();
-  char *msg = MakeMessageKID(order->finalize, csr);
+  int csrlen = strlen(csr) + strlen(csr_format) + 5;
+  char *csr_param = (char *)malloc(csrlen);
+  sprintf(csr_param, csr_format, csr);
+  free(csr);
+  char *msg = MakeMessageKID(order->finalize, csr_param);
   ESP_LOGI(acme_tag, "%s : msg %s", __FUNCTION__, msg);
   char *reply = PerformWebQuery(order->finalize, msg, "application/jose+json");
-  free(csr);
+  free(csr_param);
 
   free(msg);
   if (reply) {

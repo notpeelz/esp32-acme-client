@@ -140,6 +140,7 @@ class Acme {
      *
      */
     const char *csr_template = "{\n\t\"resource\" : \"new-authz\",\n\t\"identifier\" :\n\t{\n\t\t\"type\" : \"dns\",\n\t\t\"value\" : \"%s\"\n\t}\n}";
+    const char *csr_format = "{ \"csr\" : \"%s\" }";
 
     /*
      * ACME Protocol data definitions
