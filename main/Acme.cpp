@@ -8,7 +8,7 @@
  * writable (for us) webserver. This allows for several IoT devices to hide between a NAT
  * device and still use ACME to have certificates.
  *
- * We're implementing ACME v2 (RFC 8555) which is currently a proposed internet standard.
+ * We're implementing ACME v2 (RFC 8555), which has status "proposed standard".
  * ACME v1 has risks and should be avoided.
  *
  * Copyright (c) 2019 Danny Backx
@@ -46,10 +46,6 @@
 #include <FtpClient.h>
 
 /*
- * This stuff is for testing purposes
- * The real code should read its private keys from a file (see the versions of ReadPrivateKey).
- */
-/*
  * CTOR / DTOR
  */
 Acme::Acme() {
@@ -65,40 +61,45 @@ Acme::Acme() {
   if (config->runAcme()) {
     ctr_drbg = (mbedtls_ctr_drbg_context *)calloc(1, sizeof(mbedtls_ctr_drbg_context));
     mbedtls_ctr_drbg_init(ctr_drbg);
-    // ESP_LOGI(acme_tag, "%d: ctx %p ctx->entropy_len %d", __LINE__, ctr_drbg, ctr_drbg->entropy_len);
+
     entropy = (mbedtls_entropy_context *)calloc(1, sizeof(mbedtls_entropy_context));
     mbedtls_entropy_init(entropy);
-    // ESP_LOGI(acme_tag, "%d: ctx %p ctx->entropy_len %d", __LINE__, ctr_drbg, ctr_drbg->entropy_len);
+
     int err;
     if ((err = mbedtls_ctr_drbg_seed(ctr_drbg, mbedtls_entropy_func, entropy, NULL, 0))) {
       char buf[80];
       mbedtls_strerror(err, buf, sizeof(buf));
       ESP_LOGE(acme_tag, "mbedtls_ctr_drbg_seed failed %d %s", err, buf);
     }
-    // ESP_LOGI(acme_tag, "%d: ctx %p ctx->entropy_len %d", __LINE__, ctr_drbg, ctr_drbg->entropy_len);
   }
 
   ESP_LOGI(acme_tag, "ACME Configuration summary : %s", config->runAcme() ? "active" : "disabled");
   ESP_LOGI(acme_tag, "\tServer URL : %s", config->acmeServerUrl());
   ESP_LOGI(acme_tag, "\temail address : %s", config->acmeEmailAddress());
   ESP_LOGI(acme_tag, "\tMy URL : %s", config->acmeUrl());
-  ESP_LOGI(acme_tag, "\tPrivate key file : %s", config->getMyAcmeUserKeyFile());
+  ESP_LOGI(acme_tag, "\tAccount private key : %s", config->getMyAcmeUserKeyFile());
+  ESP_LOGI(acme_tag, "\tCertificate private key : %s", config->getAcmeCertificateKeyFile());
   ESP_LOGI(acme_tag, "\tAccount info file : %s", config->getAcmeAccountFileName());
   ESP_LOGI(acme_tag, "\tOrder info file : %s", config->getAcmeOrderFileName());
-  // ESP_LOGI(acme_tag, "\tAuthorization file : %s", config->getAcmeAuthorizationFileName());
 
 #if 0
   GeneratePrivateKey();
   WritePrivateKey("/spiffs/acme/newkey.pem");
 #endif
 
-  // Read key from file
-  if (! ReadPrivateKey()) {
+  // Account key
+  if ((pkey = ReadPrivateKey(config->getMyAcmeUserKeyFile())) == 0) {		// Read key from file
     // Generate and save an initial key if we don't have any
-    GeneratePrivateKey();
-    WritePrivateKey();
+    pkey = GeneratePrivateKey();
+    WritePrivateKey(pkey, config->getMyAcmeUserKeyFile());
   }
   rsa = mbedtls_pk_rsa(*pkey);
+
+  // Certificate key
+  if ((certkey = ReadPrivateKey(config->getAcmeCertificateKeyFile())) == 0) {
+    certkey = GeneratePrivateKey();
+    WritePrivateKey(certkey, config->getAcmeCertificateKeyFile());
+  }
 }
 
 Acme::~Acme() {
@@ -422,6 +423,74 @@ String Acme::Signature(String pr, String pl) {
   return rs;
 }
 
+// Similar, but sign with another key
+String Acme::Signature(String pr, String pl, mbedtls_pk_context *ck) {
+  int ret;
+  char buf[80];
+
+  ESP_LOGD(acme_tag, "PR %s", pr.c_str());
+  ESP_LOGD(acme_tag, "PL %s", pl.c_str());
+
+  int len = strlen(pr.c_str()) + strlen(pl.c_str()) + 4;
+  char *bb = (char *)malloc(len);
+  sprintf(bb, "%s.%s", pr.c_str(), pl.c_str());
+  ESP_LOGD(acme_tag, "signing input (length %d) {%s}", strlen((char *)bb), bb);
+
+  // Generate a digital signature
+  unsigned char *signature = (unsigned char *)calloc(2, mbedtls_pk_get_len(ck));
+  if (! signature) {
+    ESP_LOGE(acme_tag, "calloc failed, mbedtls_pk_get_len %d", mbedtls_pk_get_len(ck));
+    free(bb);
+    return (String)0;
+  }
+  int hash_size = 32;
+  unsigned char *hash = (unsigned char *)calloc(1, hash_size);
+  if (hash == 0) {
+    ESP_LOGE(acme_tag, "calloc(32) failed");
+    free(signature);
+    free(bb);
+    return (String)0;
+  }
+
+  const mbedtls_md_info_t *mdi = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+  if (!mdi) {
+    ESP_LOGE("Acme", "mbedtls_hash_get_len: md_info not found");
+    free(signature);
+    free(hash);
+    return (String)0;
+  }
+  ret = mbedtls_md(mdi, (const unsigned char *)bb, strlen(bb), (unsigned char *)hash);
+  free(bb); bb = 0;
+  if (ret != 0) {
+    mbedtls_strerror(ret, buf, sizeof(buf));
+    ESP_LOGE(acme_tag, "mbedtls_hash_fast failed %s (0x%04x)", buf, -ret);
+    free(signature);
+    free(hash);
+    return (String)0;
+  }
+
+  size_t signature_size = 0;
+  ret = mbedtls_pk_sign(ck, MBEDTLS_MD_SHA256, hash, hash_size, signature, &signature_size, mbedtls_ctr_drbg_random, ctr_drbg);
+  if (ret != 0) {
+    mbedtls_strerror(ret, buf, sizeof(buf));
+    ESP_LOGE(acme_tag, "mbedtls_pk_sign failed %s (0x%04x)", buf, -ret);
+    free(signature);
+    free(hash);
+    return (String)0;
+  }
+
+  ESP_LOGD(acme_tag, "%s: signature length %d", __FUNCTION__, strlen((char *)signature));
+  ESP_LOGD(acme_tag, "%s: signature size %d", __FUNCTION__, signature_size);
+
+  // Base64-encode and return
+  char *s = Base64((char *)signature);
+  free(signature);
+
+  String rs = String(s);
+  free(s);
+  return rs;
+}
+
 /***************************************************
  * And now for real ACME ...
  *
@@ -440,7 +509,7 @@ void Acme::QueryAcmeDirectory() {
     return;
   }
 
-  ESP_LOGI(acme_tag, "%s: parsing JSON %s", __FUNCTION__, reply);
+  ESP_LOGD(acme_tag, "%s: parsing JSON %s", __FUNCTION__, reply);
 
   DynamicJsonBuffer jb;
   JsonObject &root = jb.parseObject(reply);
@@ -602,53 +671,56 @@ void Acme::setLocation(const char *s) {
 /*
  * Manage private key
  */
-boolean Acme::GeneratePrivateKey() {
-  int ret;
-  char buf[80];
+mbedtls_pk_context *Acme::GeneratePrivateKey() {
+  mbedtls_pk_context	*key;
+  int			ret;
+  char			buf[80];
 
   ESP_LOGI(acme_tag, "Generating private key ...");
 
-  pkey = (mbedtls_pk_context *)calloc(1, sizeof(mbedtls_pk_context));
-  mbedtls_pk_init(pkey);
-  mbedtls_pk_setup(pkey, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA));
+  key = (mbedtls_pk_context *)calloc(1, sizeof(mbedtls_pk_context));
+  mbedtls_pk_init(key);
+  mbedtls_pk_setup(key, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA));
 
-  if ((ret = mbedtls_rsa_gen_key(mbedtls_pk_rsa(*pkey), mbedtls_ctr_drbg_random, ctr_drbg, /* key size */ 2048, /* exponent */ 0x10001)) != 0) {
+  if ((ret = mbedtls_rsa_gen_key(mbedtls_pk_rsa(*key), mbedtls_ctr_drbg_random, ctr_drbg, /* key size */ 2048, /* exponent */ 0x10001)) != 0) {
     mbedtls_strerror(ret, buf, sizeof(buf));
     ESP_LOGE(acme_tag, "%s: mbedtls_rsa_gen_key failed %s (0x%04x)", __FUNCTION__, buf, -ret);
-    return false;
+    free((void *)key);
+    return 0;
   }
-  return true;
+  return key;
 }
 
-boolean Acme::ReadPrivateKey(const char *pks) {
+/*
+ * Read a private key from a file
+ * Prepends our path prefix prior to use.
+ */
+mbedtls_pk_context *Acme::ReadPrivateKey(const char *ifn) {
+  mbedtls_pk_context *pk;
+
+  int fnlen = strlen(config->getFilePrefix()) + strlen(ifn) + 3;
+  char *fn = (char *)malloc(fnlen);
+  sprintf(fn, "%s/%s", config->getFilePrefix(), ifn);
+
   int ret;
   char buf[80];
 
-  if (pks == 0)
-    return false;
-
-  pkey = (mbedtls_pk_context *)calloc(1, sizeof(mbedtls_pk_context));
-  mbedtls_pk_init(pkey);
-  if ((ret = mbedtls_pk_parse_key(pkey, (const unsigned char *)pks, strlen(pks) + 1, 0, 0)) != 0) {
+  pk = (mbedtls_pk_context *)calloc(1, sizeof(mbedtls_pk_context));
+  mbedtls_pk_init(pk);
+  if ((ret = mbedtls_pk_parse_keyfile(pk, fn, 0)) != 0) {
     mbedtls_strerror(ret, buf, sizeof(buf));
-    ESP_LOGE(acme_tag, "%s: mbedtls_pk_parse_key() failed %s (0x%04x)", __FUNCTION__, buf, -ret);
-    return false;
+    ESP_LOGE(acme_tag, "%s: mbedtls_pk_parse_keyfile(%s) failed %s (0x%04x)", __FUNCTION__, fn, buf, -ret);
+    free(fn);
+    free((void *)pk);
+    return 0;
   }
 
-  ESP_LOGI(acme_tag, "%s: parsed hardcoded PEM key file", __FUNCTION__);
-
-  rsa = mbedtls_pk_rsa(*pkey);
-  if (mbedtls_rsa_check_privkey(rsa) == 0) {
-    ESP_LOGI(acme_tag, "%s: have a private RSA key", __FUNCTION__);
-    return true;
-  } else if (mbedtls_rsa_check_pubkey(rsa) == 0)
-    ESP_LOGE(acme_tag, "%s: have a public RSA key", __FUNCTION__);
-  else
-    ESP_LOGE(acme_tag, "%s : RSA : invalid key", __FUNCTION__);
-
-  return false;
+  ESP_LOGI(acme_tag, "%s: read key file (%s) ok", __FUNCTION__, fn);
+  free(fn);
+  return pk;
 }
 
+// Old version that could only read one key
 boolean Acme::ReadPrivateKey() {
   int fnlen = strlen(config->getFilePrefix()) + strlen(config->getMyAcmeUserKeyFile()) + 3;
   char *fn = (char *)malloc(fnlen);
@@ -682,10 +754,15 @@ boolean Acme::ReadPrivateKey() {
   return false;
 }
 
-void Acme::WritePrivateKey(const char *fn) {
+void Acme::WritePrivateKey(mbedtls_pk_context *pk, const char *ifn) {
+  int fnlen = strlen(config->getFilePrefix()) + strlen(ifn) + 3;
+  char *fn = (char *)malloc(fnlen);
+  sprintf(fn, "%s/%s", config->getFilePrefix(), ifn);
+
   FILE *f = fopen(fn, "w");
   if (f == 0) {
     ESP_LOGE(acme_tag, "%s: could not write private key to file %s", __FUNCTION__, fn);
+    free(fn);
     return;
   }
 
@@ -693,9 +770,10 @@ void Acme::WritePrivateKey(const char *fn) {
   char buf[80];
   unsigned char keystring[2048];
 
-  if ((ret = mbedtls_pk_write_key_pem(pkey, keystring, sizeof(keystring))) != 0) {
+  if ((ret = mbedtls_pk_write_key_pem(pk, keystring, sizeof(keystring))) != 0) {
     mbedtls_strerror(ret, buf, sizeof(buf));
     ESP_LOGE(acme_tag, "%s: mbedtls_pk_write_key_pem failed %s (0x%04x)", __FUNCTION__, buf, -ret);
+    free(fn);
     return;
   }
 
@@ -705,6 +783,7 @@ void Acme::WritePrivateKey(const char *fn) {
 
   fwrite(keystring, 1, len, f);
   fclose(f);
+  free(fn);
 }
 
 void Acme::WritePrivateKey() {
@@ -1886,11 +1965,11 @@ void Acme::StoreFileOnWebserver(char *localfn, char *remotefn) {
 #include "FS.h"
 void Acme::OrderRemove(char *dir) {
   SPIFFS.begin();
-  if (SPIFFS.remove("/acme/order.json")) {
-    ESP_LOGI(acme_tag, "Deleted order.json");
-  } else {
-    ESP_LOGE(acme_tag, "Failed to delete order.json");
-  }
+  // if (SPIFFS.remove("/acme/order.json")) {
+  //   ESP_LOGI(acme_tag, "Deleted order.json");
+  // } else {
+  //   ESP_LOGE(acme_tag, "Failed to delete order.json");
+  // }
 
   // char *dir = "/";
   // char *dir = "acme";
@@ -1901,6 +1980,7 @@ void Acme::OrderRemove(char *dir) {
     ESP_LOGE(acme_tag, "/ is not a directory");
   } else {
 
+#if 1
     File file = root.openNextFile();
     while(file){
         if(file.isDirectory()){
@@ -1911,7 +1991,24 @@ void Acme::OrderRemove(char *dir) {
         }
         file = root.openNextFile();
     }
+#endif
   }
+
+#if 1
+#define R(x)						\
+  if (SPIFFS.remove(x)) {				\
+    ESP_LOGI(acme_tag, "remove(%s) success", x);	\
+  } else {						\
+    ESP_LOGE(acme_tag, "remove(%s) failed", x);		\
+  }
+
+  R("/test.me");
+  R("/private-key.der");
+  R("/private-key.pem");
+  R("/token");
+  R("/account.pem");
+  R("/acme/newkey.pem");
+#endif
 
   SPIFFS.end();
 }

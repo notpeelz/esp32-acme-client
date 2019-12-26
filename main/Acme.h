@@ -86,7 +86,8 @@ class Acme {
     char	*Base64(const char *);
     char	*Base64(const char *, int);
     char	*Unbase64(const char *s);
-    char	*Signature(char *, char *);
+    // char	*Signature(char *, char *);
+    String	Signature(String pr, String pl, mbedtls_pk_context *ck);
     String	Signature(String, String);
     char	*MakeMessageJWK(char *url, char *payload, char *jwk);
     char	*MakeJWK();
@@ -100,11 +101,14 @@ class Acme {
     boolean	RequestNewNonce();
     static esp_err_t NonceHttpEvent(esp_http_client_event_t *event);
 
-    boolean	GeneratePrivateKey();
+    mbedtls_pk_context	*GeneratePrivateKey();
+    // boolean	GeneratePrivateKey();
     boolean	ReadPrivateKey();
-    boolean	ReadPrivateKey(const char *);
+    mbedtls_pk_context	*ReadPrivateKey(const char *fn);
+    // boolean	ReadPrivateKey(const char *);
     void	WritePrivateKey();
     void	WritePrivateKey(const char *);
+    void	WritePrivateKey(mbedtls_pk_context *pk, const char *fn);
 
     void	RequestNewAccount(const char *contact);
     boolean	ReadAccountInfo();
@@ -209,7 +213,8 @@ class Acme {
     mbedtls_rsa_context		*rsa;
     mbedtls_ctr_drbg_context	*ctr_drbg;
     mbedtls_entropy_context	*entropy;
-    mbedtls_pk_context		*pkey;
+    mbedtls_pk_context		*pkey;		// Account private key
+    mbedtls_pk_context		*certkey;	// Certificate private key
     mbedtls_md_context_t	mdctx;
 };
 

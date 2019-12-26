@@ -58,6 +58,7 @@ public:
   const char *acmeUrl();
   const char *acmeServerUrl();
   const char *getMyAcmeUserKeyFile();
+  const char *getAcmeCertificateKeyFile();
 
   const char *getAcmeAccountFileName();
   const char *getAcmeOrderFileName();
@@ -93,6 +94,7 @@ private:
   // ACME
   bool run_acme;			// Do a periodic call to renew our own certificate
   char *acme_user_private_key_file;	// file on SPIFFS where we store the ACME user's private key
+  char *acme_cert_private_key_file;	// file on SPIFFS where we store the ACME certificate's private key
   const char *acme_email_address;	//
   const char *acme_url;
   const char *acme_server_url;
