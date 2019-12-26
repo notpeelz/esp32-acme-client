@@ -104,6 +104,7 @@ class Acme {
     boolean	ReadPrivateKey();
     boolean	ReadPrivateKey(const char *);
     void	WritePrivateKey();
+    void	WritePrivateKey(const char *);
 
     void	RequestNewAccount(const char *contact);
     boolean	ReadAccountInfo();

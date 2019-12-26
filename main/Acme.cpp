@@ -85,7 +85,12 @@ Acme::Acme() {
   ESP_LOGI(acme_tag, "\tPrivate key file : %s", config->getMyAcmeUserKeyFile());
   ESP_LOGI(acme_tag, "\tAccount info file : %s", config->getAcmeAccountFileName());
   ESP_LOGI(acme_tag, "\tOrder info file : %s", config->getAcmeOrderFileName());
-  ESP_LOGI(acme_tag, "\tAuthorization file : %s", config->getAcmeAuthorizationFileName());
+  // ESP_LOGI(acme_tag, "\tAuthorization file : %s", config->getAcmeAuthorizationFileName());
+
+#if 0
+  GeneratePrivateKey();
+  WritePrivateKey("/spiffs/acme/newkey.pem");
+#endif
 
   // Read key from file
   if (! ReadPrivateKey()) {
@@ -118,7 +123,6 @@ Acme::~Acme() {
  */
 void Acme::NetworkConnected(void *ctx, system_event_t *event) {
   ESP_LOGI(acme_tag, "%s", __FUNCTION__);
-  // RunStackTrace();
 
   // First steps : query the API URLs, and get a nonce.
   QueryAcmeDirectory();
@@ -599,11 +603,6 @@ void Acme::setLocation(const char *s) {
  * Manage private key
  */
 boolean Acme::GeneratePrivateKey() {
-  /*
-   * FIXME this doesn't work yet
-   */
-  #warning "broken"
-
   int ret;
   char buf[80];
 
@@ -681,6 +680,31 @@ boolean Acme::ReadPrivateKey() {
 
   free(fn);
   return false;
+}
+
+void Acme::WritePrivateKey(const char *fn) {
+  FILE *f = fopen(fn, "w");
+  if (f == 0) {
+    ESP_LOGE(acme_tag, "%s: could not write private key to file %s", __FUNCTION__, fn);
+    return;
+  }
+
+  int ret, len;
+  char buf[80];
+  unsigned char keystring[2048];
+
+  if ((ret = mbedtls_pk_write_key_pem(pkey, keystring, sizeof(keystring))) != 0) {
+    mbedtls_strerror(ret, buf, sizeof(buf));
+    ESP_LOGE(acme_tag, "%s: mbedtls_pk_write_key_pem failed %s (0x%04x)", __FUNCTION__, buf, -ret);
+    return;
+  }
+
+  len = strlen((char *)keystring);
+  ESP_LOGI(acme_tag, "%s: private key len %d", __FUNCTION__, len);
+  ESP_LOGI(acme_tag, "Key : %s", keystring);
+
+  fwrite(keystring, 1, len, f);
+  fclose(f);
 }
 
 void Acme::WritePrivateKey() {
@@ -1958,33 +1982,42 @@ char *Acme::GenerateCSR() {
   mbedtls_x509write_csr_set_md_alg(&req, MBEDTLS_MD_SHA256);
   // mbedtls_x509write_csr_set_key_usage(&req, MBEDTLS_X509_NS_CERT_TYPE_SSL_CLIENT);	// Not set by default
   mbedtls_x509write_csr_set_key(&req, pkey);
-  ret = mbedtls_x509write_csr_set_subject_name(&req, config->acmeUrl());
+
+  // Specify our URL
+  int snlen = strlen(config->acmeUrl()) + 4;
+  char *sn = (char *)malloc(snlen);
+  sprintf(sn, "CN=%s", config->acmeUrl());
+  ret = mbedtls_x509write_csr_set_subject_name(&req, sn);
   if (ret != 0) {
     char buf[80];
     mbedtls_strerror(ret, buf, sizeof(buf));
     ESP_LOGE(acme_tag, "%s: mbedtls_x509write_csr_set_subject_name failed %s (0x%04x)", __FUNCTION__, buf, -ret);
     mbedtls_x509write_csr_free(&req);
+    free(sn);
     return 0;
   }
 
   unsigned char *buffer = (unsigned char *)malloc(buflen);
   memset(buffer, 0, buflen);
 
-  // Note this requires a change to the function: it should malloc(4096) instead of allocating this directly.
-  ret = mbedtls_x509write_csr_pem(&req, buffer, buflen, mbedtls_ctr_drbg_random, ctr_drbg);
-  if (ret != 0) {
+  // RFC 8555 §7.4 says write in (base64url-encoded) DER format
+  int len = mbedtls_x509write_csr_der(&req, buffer, buflen, mbedtls_ctr_drbg_random, ctr_drbg);
+  if (len < 0) {
     char buf[80];
     mbedtls_strerror(ret, buf, sizeof(buf));
-    ESP_LOGE(acme_tag, "%s: mbedtls_x509write_csr_pem failed %s (0x%04x)", __FUNCTION__, buf, -ret);
+    ESP_LOGE(acme_tag, "%s: mbedtls_x509write_csr_der failed %s (0x%04x)", __FUNCTION__, buf, -ret);
     mbedtls_x509write_csr_free(&req);
     free((void *)buffer);
+    free(sn);
     return 0;
   }
 
-  ESP_LOGI(acme_tag, "%s: csr %s", __FUNCTION__, buffer);
+  // output is written at the end of the buffer, so point to it
+  char *p = ((char *)buffer) + buflen - len;
+  char *csr = Base64(p, len);
 
-  char *csr = Base64((char *)buffer);
   free((void *)buffer);
+  free(sn);
   mbedtls_x509write_csr_free(&req);
 
   return csr;
