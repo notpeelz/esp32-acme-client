@@ -320,6 +320,9 @@ static void HandleMqtt(char *topic, char *message) {
     acme->OrderStart();
   else if (strcmp(message, "challenge") == 0 || message[0] == '2')
     acme->ChallengeStart();
+  else if (strcmp(message, "dir") == 0 || strcmp(message, "list") == 0) {
+    acme->ListFiles();
+  }
 }
 
 static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event) {

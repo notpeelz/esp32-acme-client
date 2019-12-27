@@ -59,6 +59,7 @@ public:
   const char *acmeServerUrl();
   const char *getMyAcmeUserKeyFile();
   const char *getAcmeCertificateKeyFile();
+  const char *getAcmeCertificateFile();
 
   const char *getAcmeAccountFileName();
   const char *getAcmeOrderFileName();
@@ -99,7 +100,7 @@ private:
   const char *acme_url;
   const char *acme_server_url;
 
-  const char *acme_account_fn, *acme_order_fn;
+  const char *acme_account_fn, *acme_order_fn, *acme_cert_fn;
 
   // FTP
   bool run_ftp;				// Simplistic FTP server

@@ -88,12 +88,12 @@ Acme::Acme() {
 #endif
 
   // Account key
-  if ((pkey = ReadPrivateKey(config->getMyAcmeUserKeyFile())) == 0) {		// Read key from file
+  if ((accountkey = ReadPrivateKey(config->getMyAcmeUserKeyFile())) == 0) {		// Read key from file
     // Generate and save an initial key if we don't have any
-    pkey = GeneratePrivateKey();
-    WritePrivateKey(pkey, config->getMyAcmeUserKeyFile());
+    accountkey = GeneratePrivateKey();
+    WritePrivateKey(accountkey, config->getMyAcmeUserKeyFile());
   }
-  rsa = mbedtls_pk_rsa(*pkey);
+  rsa = mbedtls_pk_rsa(*accountkey);
 
   // Certificate key
   if ((certkey = ReadPrivateKey(config->getAcmeCertificateKeyFile())) == 0) {
@@ -144,7 +144,10 @@ void Acme::NetworkConnected(void *ctx, system_event_t *event) {
     WriteOrderInfo();
   }
 
-  ESP_LOGI(acme_tag, "%s : order status %s", __FUNCTION__, order->status);
+  if (order)
+    ESP_LOGI(acme_tag, "%s : order status %s", __FUNCTION__, order->status);
+  else
+    ESP_LOGE(acme_tag, "%s : no current order", __FUNCTION__);
 
   boolean valid = false;
   // If we have an order that needs verifying, do so.
@@ -156,8 +159,14 @@ void Acme::NetworkConnected(void *ctx, system_event_t *event) {
     }
   }
 
-  if (valid) {
-    FinalizeOrder();
+  if (order && order->status) {
+    if (strcmp(order->status, "ready") == 0) {
+      FinalizeOrder();
+    }
+  }
+
+  if (order && order->certificate) {
+    DownloadCertificate();
   }
 
   // CleanupAcmeDirectory();
@@ -369,9 +378,9 @@ String Acme::Signature(String pr, String pl) {
   ESP_LOGD(acme_tag, "signing input (length %d) {%s}", strlen((char *)bb), bb);
 
   // Generate a digital signature
-  unsigned char *signature = (unsigned char *)calloc(2, mbedtls_pk_get_len(pkey));	// hack
+  unsigned char *signature = (unsigned char *)calloc(2, mbedtls_pk_get_len(accountkey));	// hack
   if (! signature) {
-    ESP_LOGE(acme_tag, "calloc failed, mbedtls_pk_get_len %d", mbedtls_pk_get_len(pkey));
+    ESP_LOGE(acme_tag, "calloc failed, mbedtls_pk_get_len %d", mbedtls_pk_get_len(accountkey));
     free(bb);
     return (String)0;
   }
@@ -402,7 +411,7 @@ String Acme::Signature(String pr, String pl) {
   }
 
   size_t signature_size = 0;
-  ret = mbedtls_pk_sign(pkey, MBEDTLS_MD_SHA256, hash, hash_size, signature, &signature_size, mbedtls_ctr_drbg_random, ctr_drbg);
+  ret = mbedtls_pk_sign(accountkey, MBEDTLS_MD_SHA256, hash, hash_size, signature, &signature_size, mbedtls_ctr_drbg_random, ctr_drbg);
   if (ret != 0) {
     mbedtls_strerror(ret, buf, sizeof(buf));
     ESP_LOGE(acme_tag, "mbedtls_pk_sign failed %s (0x%04x)", buf, -ret);
@@ -502,7 +511,7 @@ String Acme::Signature(String pr, String pl, mbedtls_pk_context *ck) {
 void Acme::QueryAcmeDirectory() {
   ESP_LOGI(acme_tag, "Querying directory at %s", config->acmeServerUrl());
 
-  char *reply = PerformWebQuery((char *)config->acmeServerUrl(), 0, 0);
+  char *reply = PerformWebQuery((char *)config->acmeServerUrl(), 0, 0, 0);
 
   if (reply == 0) {
     ESP_LOGE(acme_tag, "%s: PerformWebQuery -> 0, returning", __FUNCTION__);
@@ -534,10 +543,14 @@ void Acme::QueryAcmeDirectory() {
   SD(directory->newAccount, "newAccount");
   SD(directory->newNonce, "newNonce");
   SD(directory->newOrder, "newOrder");
-  SD(directory->newAuthz, "newAuthz");
 
   free(reply);
-  reply = 0;
+
+  if (directory->newAccount == 0 || directory->newNonce == 0 || directory->newOrder == 0)
+    ESP_LOGE(acme_tag, "%s: incomplete results : newAccount %p newNonce %p newOrder %p", __FUNCTION__,
+      directory->newAccount, directory->newNonce, directory->newOrder);
+  else
+    ESP_LOGI(acme_tag, "%s: ok", __FUNCTION__);
 }
 
 /*
@@ -548,7 +561,6 @@ void Acme::CleanupAcmeDirectory() {
     if (directory->newAccount) free(directory->newAccount);
     if (directory->newNonce) free(directory->newNonce);
     if (directory->newOrder) free(directory->newOrder);
-    if (directory->newAuthz) free(directory->newAuthz);
     free(directory);
     directory = 0;
   }
@@ -720,40 +732,6 @@ mbedtls_pk_context *Acme::ReadPrivateKey(const char *ifn) {
   return pk;
 }
 
-// Old version that could only read one key
-boolean Acme::ReadPrivateKey() {
-  int fnlen = strlen(config->getFilePrefix()) + strlen(config->getMyAcmeUserKeyFile()) + 3;
-  char *fn = (char *)malloc(fnlen);
-  sprintf(fn, "%s/%s", config->getFilePrefix(), config->getMyAcmeUserKeyFile());
-
-  int ret;
-  char buf[80];
-
-  pkey = (mbedtls_pk_context *)calloc(1, sizeof(mbedtls_pk_context));
-  mbedtls_pk_init(pkey);
-  if ((ret = mbedtls_pk_parse_keyfile(pkey, fn, 0)) != 0) {
-    mbedtls_strerror(ret, buf, sizeof(buf));
-    ESP_LOGE(acme_tag, "%s: mbedtls_pk_parse_keyfile(%s) failed %s (0x%04x)", __FUNCTION__, fn, buf, -ret);
-    free(fn);
-    return false;
-  }
-
-  ESP_LOGI(acme_tag, "%s: read key SPIFFS key file (%s) ok", __FUNCTION__, fn);
-  rsa = mbedtls_pk_rsa(*pkey);
-
-  if (mbedtls_rsa_check_privkey(rsa) == 0) {
-    ESP_LOGI(acme_tag, "%s: have a private RSA key (%s)", __FUNCTION__, fn);
-    free(fn);
-    return true;
-  } else if (mbedtls_rsa_check_pubkey(rsa) == 0)
-    ESP_LOGE(acme_tag, "%s: have a public RSA key (%s)", __FUNCTION__, fn);
-  else
-    ESP_LOGE(acme_tag, "%s : RSA : invalid key in %s", __FUNCTION__, fn);
-
-  free(fn);
-  return false;
-}
-
 void Acme::WritePrivateKey(mbedtls_pk_context *pk, const char *ifn) {
   int fnlen = strlen(config->getFilePrefix()) + strlen(ifn) + 3;
   char *fn = (char *)malloc(fnlen);
@@ -791,7 +769,7 @@ void Acme::WritePrivateKey() {
   char buf[80];
   unsigned char keystring[2048];
 
-  if ((ret = mbedtls_pk_write_key_pem(pkey, keystring, sizeof(keystring))) != 0) {
+  if ((ret = mbedtls_pk_write_key_pem(accountkey, keystring, sizeof(keystring))) != 0) {
     mbedtls_strerror(ret, buf, sizeof(buf));
     ESP_LOGE(acme_tag, "%s: mbedtls_pk_write_key_pem failed %s (0x%04x)", __FUNCTION__, buf, -ret);
     return;
@@ -847,7 +825,7 @@ void Acme::RequestNewAccount(const char *contact) {
   }
   ESP_LOGD(acme_tag, "%s", msg);
 
-  char *reply = PerformWebQuery(directory->newAccount, msg, "application/jose+json");
+  char *reply = PerformWebQuery(directory->newAccount, msg, "application/jose+json", 0);
   free(msg);
   if (reply) {
     ESP_LOGI(acme_tag, "%s PerformWebQuery -> %s", __FUNCTION__, reply);
@@ -993,7 +971,7 @@ boolean Acme::ReadAccountInfo() {
 // Choose wisely
 #define	NREAD_INC	250
 
-  // SPIFFS doesn't allow use of fseek to determine file length, so read in chunks in that case
+  // ESP-IDF VFS over SPIFFS doesn't allow use of fseek to determine file length, so read in chunks in that case
   // Potential over-allocation is limited to NREAD_INC bytes
   long len = fseek(f, 0L, SEEK_END);
   if (len == 0) {
@@ -1111,7 +1089,7 @@ void Acme::RequestNewOrder(const char *url) {
   }
   ESP_LOGI(acme_tag, "%s -> %s", __FUNCTION__, msg);
 
-  char *reply = PerformWebQuery(directory->newOrder, msg, "application/jose+json");
+  char *reply = PerformWebQuery(directory->newOrder, msg, "application/jose+json", 0);
   // free(msg);
   if (reply) {
     ESP_LOGI(acme_tag, "PerformWebQuery -> %s", reply);
@@ -1167,7 +1145,7 @@ boolean Acme::ReadOrderInfo() {
 // Choose wisely
 #define	NREAD_INC	250
 
-  // SPIFFS doesn't allow use of fseek to determine file length, so read in chunks in that case
+  // ESP-IDF VFS over SPIFFS doesn't allow use of fseek to determine file length, so read in chunks in that case
   // Potential over-allocation is limited to NREAD_INC bytes
   long len = fseek(f, 0L, SEEK_END);
   if (len == 0) {
@@ -1410,7 +1388,7 @@ boolean Acme::ValidateAlertServer() {
   ESP_LOGD(acme_tag, "%s: query %s message %s", __FUNCTION__, challenge->challenges[http01_ix].url, msg);
 
   // FIXME only one authorization is picked up
-  char *reply = PerformWebQuery(challenge->challenges[http01_ix].url, msg, "application/jose+json");
+  char *reply = PerformWebQuery(challenge->challenges[http01_ix].url, msg, "application/jose+json", 0);
 
   free(msg);
   if (reply) {
@@ -1454,7 +1432,35 @@ boolean Acme::ValidateAlertServer() {
   }
 }
 
-void Acme::ReadCertificate() {
+void Acme::DownloadCertificate() {
+  ESP_LOGI(acme_tag, "%s(%s)", __FUNCTION__, order->certificate);
+
+  char *msg = MakeMessageKID(order->certificate, "");
+
+  char *reply = PerformWebQuery(order->authorizations[0], msg, "application/jose+json", acme_accept_pem_chain);
+
+  free(msg);
+  if (reply) {
+    ESP_LOGI(acme_tag, "PerformWebQuery -> %s", reply);
+  } else {
+    ESP_LOGE(acme_tag, "%s: PerformWebQuery -> null", __FUNCTION__);
+  }
+
+  FILE *f = fopen(config->getAcmeCertificateFile(), "w");
+  if (f) {
+    size_t len = strlen(reply);
+    size_t fl = fwrite(reply, 1, len, f);
+    if (fl != len) {
+      ESP_LOGE(acme_tag, "Failed to write certificate to %s, %d of %d written", config->getAcmeCertificateFile(), fl, len);
+    } else {
+      ESP_LOGI(acme_tag, "Wrote certificate to %s", config->getAcmeCertificateFile());
+    }
+    fclose(f);
+  } else {
+    ESP_LOGE(acme_tag, "Could not open %s to write certificate, error %d (%s)", config->getAcmeCertificateFile(),
+      errno, strerror(errno));
+  }
+  free(reply);
 }
 
 /*
@@ -1548,7 +1554,7 @@ void Acme::DownloadAuthorizationResource() {
   ESP_LOGD(acme_tag, "%s: query %s message %s", __FUNCTION__, order->authorizations[0], msg);
 
   // FIXME only one authorization is picked up
-  char *reply = PerformWebQuery(order->authorizations[0], msg, "application/jose+json");
+  char *reply = PerformWebQuery(order->authorizations[0], msg, "application/jose+json", 0);
 
   free(msg);
   if (reply) {
@@ -1786,7 +1792,7 @@ char *Acme::MakeProtectedKID(const char *query) {
  *
  * Post the topost data.
  */
-char *Acme::PerformWebQuery(const char *query, const char *topost, const char *apptype) {
+char *Acme::PerformWebQuery(const char *query, const char *topost, const char *apptype, const char *accept_message) {
   esp_err_t			err;
   esp_http_client_config_t	httpc;
   esp_http_client_handle_t	client;
@@ -1814,7 +1820,7 @@ char *Acme::PerformWebQuery(const char *query, const char *topost, const char *a
       esp_http_client_cleanup(client);
       return 0;
     } else
-      ESP_LOGI(acme_tag, "%s: set_post_field length %d", __FUNCTION__, strlen(topost));
+      ESP_LOGD(acme_tag, "%s: set_post_field length %d", __FUNCTION__, strlen(topost));
 
     // Do a POST query if we're posting data.
     if ((err = esp_http_client_set_method(client, HTTP_METHOD_POST)) != ESP_OK) {
@@ -1832,6 +1838,16 @@ char *Acme::PerformWebQuery(const char *query, const char *topost, const char *a
     // Don't fail on this.
   } else {
     ESP_LOGD(acme_tag, "Client_set_header(%s=%s)", acme_content_type, at);
+  }
+
+  // When this parameter is supplied, the "Accept:" is implied
+  if (accept_message) {
+    if ((err = esp_http_client_set_header(client, acme_accept_header, accept_message)) != ESP_OK) {
+      ESP_LOGE(acme_tag, "%s: client_set_header(%s=%s) error %d %s", __FUNCTION__, acme_accept_header, accept_message, err, esp_err_to_name(err));
+      // Don't fail on this.
+    } else {
+      ESP_LOGD(acme_tag, "Client_set_header(%s=%s)", acme_accept_header, accept_message);
+    }
   }
 
   if (topost) {
@@ -1902,7 +1918,7 @@ esp_err_t Acme::HttpEvent(esp_http_client_event_t *event) {
   default:
     break;
   case HTTP_EVENT_ON_HEADER:
-    ESP_LOGI("Acme", "%s: header %s value %s", __FUNCTION__, event->header_key, event->header_value);
+    ESP_LOGD("Acme", "%s: header %s value %s", __FUNCTION__, event->header_key, event->header_value);
     if (strcmp(event->header_key, acme_nonce_header) == 0)
       acme->setNonce(event->header_value);
     else if (strcmp(event->header_key, acme_location_header) == 0)
@@ -1965,14 +1981,13 @@ void Acme::StoreFileOnWebserver(char *localfn, char *remotefn) {
 #include "FS.h"
 void Acme::OrderRemove(char *dir) {
   SPIFFS.begin();
-  // if (SPIFFS.remove("/acme/order.json")) {
-  //   ESP_LOGI(acme_tag, "Deleted order.json");
-  // } else {
-  //   ESP_LOGE(acme_tag, "Failed to delete order.json");
-  // }
 
-  // char *dir = "/";
-  // char *dir = "acme";
+  if (SPIFFS.remove("/spiffs/acme/order.json"))
+    ESP_LOGI(acme_tag, "Removed /spiffs/acme/order.json");
+  if (SPIFFS.remove("/acme/order.json"))
+    ESP_LOGI(acme_tag, "Removed /acme/order.json");
+
+#if 0
   File root = SPIFFS.open(dir);
   if (!root) {
     ESP_LOGE(acme_tag, "Failed to open %s", dir);
@@ -1980,7 +1995,6 @@ void Acme::OrderRemove(char *dir) {
     ESP_LOGE(acme_tag, "/ is not a directory");
   } else {
 
-#if 1
     File file = root.openNextFile();
     while(file){
         if(file.isDirectory()){
@@ -1991,10 +2005,10 @@ void Acme::OrderRemove(char *dir) {
         }
         file = root.openNextFile();
     }
-#endif
   }
+#endif
 
-#if 1
+#if 0
 #define R(x)						\
   if (SPIFFS.remove(x)) {				\
     ESP_LOGI(acme_tag, "remove(%s) success", x);	\
@@ -2009,6 +2023,34 @@ void Acme::OrderRemove(char *dir) {
   R("/account.pem");
   R("/acme/newkey.pem");
 #endif
+
+  SPIFFS.end();
+}
+
+void Acme::ListFiles() {
+  SPIFFS.begin();
+
+  File root = SPIFFS.open("/");
+  if (!root) {
+    ESP_LOGE(acme_tag, "Failed to open /");
+  } else if (!root.isDirectory()) {
+    ESP_LOGE(acme_tag, "/ is not a directory");
+  } else {
+    File file = root.openNextFile();
+    while (file) {
+      ESP_LOGI(acme_tag, "File: %s size %d", file.name(), file.size());
+      file = root.openNextFile();
+#if 0
+      if (file.isDirectory()) {
+        ESP_LOGI(acme_tag, "Dir: %s", file.name());
+        // recursive : listDir(fs, file.name(), levels -1);
+      } else {
+        ESP_LOGI(acme_tag, "File: %s size %d", file.name(), file.size());
+      }
+      file = root.openNextFile();
+#endif
+    }
+  }
 
   SPIFFS.end();
 }
@@ -2044,8 +2086,14 @@ void Acme::OrderStart() {
     }
   }
 
-  if (valid) {
-    FinalizeOrder();
+  if (order && order->status) {
+    if (strcmp(order->status, "ready") == 0) {
+      FinalizeOrder();
+    }
+  }
+
+  if (order && order->certificate) {
+    DownloadCertificate();
   }
 }
 
@@ -2063,8 +2111,14 @@ void Acme::ChallengeStart() {
     }
   }
 
-  if (valid) {
-    FinalizeOrder();
+  if (order && order->status) {
+    if (strcmp(order->status, "ready") == 0) {
+      FinalizeOrder();
+    }
+  }
+
+  if (order && order->certificate) {
+    DownloadCertificate();
   }
 }
 
@@ -2078,7 +2132,7 @@ char *Acme::GenerateCSR() {
 
   mbedtls_x509write_csr_set_md_alg(&req, MBEDTLS_MD_SHA256);
   // mbedtls_x509write_csr_set_key_usage(&req, MBEDTLS_X509_NS_CERT_TYPE_SSL_CLIENT);	// Not set by default
-  mbedtls_x509write_csr_set_key(&req, pkey);
+  mbedtls_x509write_csr_set_key(&req, certkey);
 
   // Specify our URL
   int snlen = strlen(config->acmeUrl()) + 4;
@@ -2135,7 +2189,7 @@ void Acme::FinalizeOrder() {
   free(csr);
   char *msg = MakeMessageKID(order->finalize, csr_param);
   ESP_LOGI(acme_tag, "%s : msg %s", __FUNCTION__, msg);
-  char *reply = PerformWebQuery(order->finalize, msg, "application/jose+json");
+  char *reply = PerformWebQuery(order->finalize, msg, "application/jose+json", 0);
   free(csr_param);
 
   free(msg);
@@ -2175,4 +2229,8 @@ void Acme::FinalizeOrder() {
 }
 
 void Acme::ReadFinalizeReply(JsonObject &json) {
+  ReadOrder(json);
+
+  const char *cert = json["certificate"];
+  order->certificate = cert ? strdup(cert) : 0;
 }

@@ -30,6 +30,7 @@ Config::Config(String mac) {
   name = 0;
 
   ca_cert = my_cert = my_key = trusted = acme_user_private_key_file = acme_cert_private_key_file = 0;
+  acme_cert_fn = 0;
   run_acme = false;
   acme_email_address = 0;
   acme_url = acme_server_url = 0;
@@ -50,6 +51,7 @@ Config::Config(char *mac) {
   name = 0;
 
   ca_cert = my_cert = my_key = trusted = acme_user_private_key_file = acme_cert_private_key_file = 0;
+  acme_cert_fn = 0;
   run_acme = false;
   acme_email_address = 0;
   acme_url = acme_server_url = 0;
@@ -173,6 +175,12 @@ void Config::ParseConfig(JsonObject &jo) {
   else
     acme_cert_private_key_file = (char *)"cert-private.pem";
 
+  const char *acfn = jo["acme_cert_fn"];
+  if (acfn)
+    acme_cert_fn = strdup(acfn);
+  else
+    acme_cert_fn = (char *)"acme/certificate.pem";
+
   const char *aafn = jo["acme_account_file_name"];
   if (aafn)
     acme_account_fn = strdup(aafn);
@@ -220,6 +228,7 @@ char *Config::QueryConfig() {
   json["acme_server_url"] = acme_server_url;
   json["acme_user_private_key_file"] = acme_user_private_key_file;
   json["acme_cert_private_key_file"] = acme_cert_private_key_file;
+  json["acme_cert_fn"] = acme_cert_fn;
 
   json["ca_cert"] = ca_cert;
   json["my_cert"] = my_cert;
@@ -339,6 +348,10 @@ const char *Config::getMyAcmeUserKeyFile() {
 
 const char *Config::getAcmeCertificateKeyFile() {
   return acme_cert_private_key_file;
+}
+
+const char *Config::getAcmeCertificateFile() {
+  return acme_cert_fn;
 }
 
 const char *Config::getAcmeAccountFileName() {

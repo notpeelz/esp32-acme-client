@@ -54,6 +54,7 @@ class Acme {
     void OrderRemove(char *);
     void OrderStart();
     void ChallengeStart();
+    void ListFiles();
 
     struct Certificate {
       char *fullchain;
@@ -93,7 +94,7 @@ class Acme {
     char	*MakeJWK();
     char	*MakeMessageKID(const char *url, const char *payload);
     char	*MakeProtectedKID(const char *query);
-    char	*PerformWebQuery(const char *, const char *, const char *);
+    char	*PerformWebQuery(const char *, const char *, const char *, const char *accept_msg);
     static esp_err_t HttpEvent(esp_http_client_event_t *event);
 
     void	QueryAcmeDirectory();
@@ -134,7 +135,7 @@ class Acme {
     boolean	ReadAuthorizationReply(JsonObject &json);
 
     void	FinalizeOrder();
-    void	ReadCertificate();
+    void	DownloadCertificate();
     void	ReadFinalizeReply(JsonObject &json);
     char	*GenerateCSR();
 
@@ -145,6 +146,8 @@ class Acme {
      */
     const char *csr_template = "{\n\t\"resource\" : \"new-authz\",\n\t\"identifier\" :\n\t{\n\t\t\"type\" : \"dns\",\n\t\t\"value\" : \"%s\"\n\t}\n}";
     const char *csr_format = "{ \"csr\" : \"%s\" }";
+    const char *acme_accept_header = "Accept";
+    const char *acme_accept_pem_chain = "application/pem-certificate-chain";
 
     /*
      * ACME Protocol data definitions
@@ -152,10 +155,7 @@ class Acme {
     struct Directory {
       char	*newAccount,
 		*newNonce,
-		*newOrder,
-		*newAuthz,
-		*keyChange,
-		*revokeCert;
+		*newOrder;
     };
 
     struct Account {			// See ACME RFC § 7.1.2
@@ -213,7 +213,7 @@ class Acme {
     mbedtls_rsa_context		*rsa;
     mbedtls_ctr_drbg_context	*ctr_drbg;
     mbedtls_entropy_context	*entropy;
-    mbedtls_pk_context		*pkey;		// Account private key
+    mbedtls_pk_context		*accountkey;	// Account private key
     mbedtls_pk_context		*certkey;	// Certificate private key
     mbedtls_md_context_t	mdctx;
 };
