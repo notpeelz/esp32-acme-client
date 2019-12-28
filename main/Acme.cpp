@@ -57,6 +57,8 @@ Acme::Acme() {
   reply_buffer = 0;
   reply_buffer_len = 0;
   http01_ix = -1;
+  last_run = 0;
+  certificate = 0;
 
   if (config->runAcme()) {
     ctr_drbg = (mbedtls_ctr_drbg_context *)calloc(1, sizeof(mbedtls_ctr_drbg_context));
@@ -117,6 +119,12 @@ Acme::~Acme() {
   entropy = 0;
   free(ctr_drbg);
   ctr_drbg = 0;
+
+  if (certificate) {
+    mbedtls_x509_crt_free(certificate);
+    free(certificate);
+    certificate = 0;
+  }
 }
 
 /*
@@ -125,14 +133,27 @@ Acme::~Acme() {
 void Acme::NetworkConnected(void *ctx, system_event_t *event) {
   ESP_LOGI(acme_tag, "%s", __FUNCTION__);
 
+  /*
+   * Get startup info :
+   * - the API calls for the ACME server
+   * - an initial nonce
+   * - our account and order status
+   * See if we already have a local certificate
+   */
+  QueryAcmeDirectory();
+  RequestNewNonce();
+  RequestNewAccount(config->acmeEmailAddress(), true);
+  ReadCertificate();
+
+#if 0
   // First steps : query the API URLs, and get a nonce.
   QueryAcmeDirectory();
   RequestNewNonce();
 
   // Read account info from local memory, or query the server
   if (! ReadAccountInfo()) {
-    RequestNewAccount(config->acmeEmailAddress());
-    // RequestNewAccount(0);
+    RequestNewAccount(config->acmeEmailAddress(), false);
+    // RequestNewAccount(0, false);
 
     WriteAccountInfo();
   }
@@ -171,7 +192,7 @@ void Acme::NetworkConnected(void *ctx, system_event_t *event) {
     DownloadCertificate();
     WriteOrderInfo();
   }
-
+#endif
   // CleanupAcmeDirectory();
 }
 
@@ -179,7 +200,22 @@ void Acme::NetworkDisconnected(void *ctx, system_event_t *event) {
 }
 
 void Acme::loop(time_t now) {
-  if (config->runAcme()) {
+  if (! config->runAcme())
+    return;
+  // Only do stuff on first call or wait an hour
+  if ((last_run != 0) && (now - last_run < 3600))
+      return;
+  last_run = now;
+
+  // If we have a certificate, are we inside the renewal time range
+  if (certificate == 0)
+    return;
+  time_t until = TimeMbedToTimestamp(certificate->valid_to);
+  time_t month = 60 * 60 * 24 * 31;
+
+  // TODO
+  if (until - month < now) {
+    RenewCertificate();
   }
 }
 
@@ -772,9 +808,8 @@ void Acme::WritePrivateKey() {
 /*
  * Account handling
  */
-void Acme::RequestNewAccount(const char *contact) {
+void Acme::RequestNewAccount(const char *contact, boolean onlyExisting) {
   char *msg, *jwk, *payload;
-  bool onlyExisting = false;	// TODO trigger onlyReturnExisting functionality
 
   if (directory == 0 || rsa == 0)
     return;
@@ -799,13 +834,11 @@ void Acme::RequestNewAccount(const char *contact) {
     ESP_LOGE(acme_tag, "%s: null message", __FUNCTION__);
     return;
   }
-  ESP_LOGD(acme_tag, "%s", msg);
+  ESP_LOGI(acme_tag, "%s : msg %s", __FUNCTION__, msg);
 
   char *reply = PerformWebQuery(directory->newAccount, msg, acme_jose_json, 0);
   free(msg);
-  if (reply) {
-    ESP_LOGI(acme_tag, "%s PerformWebQuery -> %s", __FUNCTION__, reply);
-  } else {
+  if (reply == 0) {
     ESP_LOGE(acme_tag, "%s PerformWebQuery -> null", __FUNCTION__);
     return;
   }
@@ -834,7 +867,7 @@ void Acme::RequestNewAccount(const char *contact) {
   } else if (reply_status == 0) {
     ESP_LOGE(acme_tag, "%s: null reply_status", __FUNCTION__);
   } else {
-    ESP_LOGE(acme_tag, "%s: reply_status %s", __FUNCTION__, reply_status);
+    ESP_LOGE(acme_tag, "%s: reply_status '%s'", __FUNCTION__, reply_status);
   }
 
   ReadAccount(root);
@@ -866,15 +899,6 @@ void Acme::ReadAccount(JsonObject &json) {
     }										\
   }
 
-#define	BZZ1(x)									\
-  {										\
-    const char *x = json[#x];							\
-    if (x)									\
-      account->x = strdup(x);							\
-    else									\
-      account->x = 0;								\
-  }
-
 #define	BZZ2(x,y)								\
   {										\
     const char *x = json["key"][#y];						\
@@ -894,7 +918,6 @@ void Acme::ReadAccount(JsonObject &json) {
   BZZ(status);
 
 #undef BZZ
-#undef BZZ1
 #undef BZZ2
 
   JsonArray &jca = json["contact"];
@@ -1224,25 +1247,13 @@ void Acme::ReadOrder(JsonObject &json) {
  */
 #define	BZZ(x)									\
   {										\
-    ESP_LOGD(acme_tag, "%s : reading %s", __FUNCTION__, #x);			\
     const char *x = json[#x];							\
     if (x) {									\
-      ESP_LOGI(acme_tag, "%s : read %s as %s", __FUNCTION__, #x, x);		\
+      ESP_LOGD(acme_tag, "%s : read %s as %s", __FUNCTION__, #x, x);		\
       order->x = strdup(x);							\
     } else {									\
-      ESP_LOGD(acme_tag, "%s : no %s read", __FUNCTION__, #x);			\
       order->x = 0;								\
     }										\
-  }
-
-#define	BZZ2(x,y)								\
-  {										\
-    const char *x = json["key"][#y];						\
-    ESP_LOGI(acme_tag, "%s: read %s as %s", __FUNCTION__, #y, x);		\
-    if (x)									\
-      order->x = strdup(x);							\
-    else									\
-      account->x = 0;								\
   }
 
   BZZ(status);
@@ -1250,8 +1261,9 @@ void Acme::ReadOrder(JsonObject &json) {
   BZZ(finalize);
   BZZ(certificate);
 
+  order->t_expires = timestamp(order->expires);
+
 #undef BZZ
-#undef BZZ2
 
   JsonArray &jia = json["identifiers"];
   ESP_LOGD(acme_tag, "%s : %d identifiers", __FUNCTION__, jia.size());
@@ -1426,7 +1438,7 @@ void Acme::DownloadCertificate() {
     ESP_LOGE(acme_tag, "%s: PerformWebQuery -> null", __FUNCTION__);
   }
 
-  int fnl = strlen(config->getAcmeCertificateFile()) + strlen(config->getFilePrefix()) + 3;
+  int fnl = strlen(config->getFilePrefix()) + strlen(config->getAcmeCertificateFile()) + 3;
   char *fn = (char *)malloc(fnl);
   sprintf(fn, "%s/%s", config->getFilePrefix(), config->getAcmeCertificateFile());
   FILE *f = fopen(fn, "w");
@@ -1443,6 +1455,8 @@ void Acme::DownloadCertificate() {
     ESP_LOGE(acme_tag, "Could not open %s to write certificate, error %d (%s)", fn, errno, strerror(errno));
   }
   free(reply);
+
+  ReadCertificate();
 }
 
 /*
@@ -1679,6 +1693,8 @@ void Acme::ReadChallenge(JsonObject &json) {
 
   BZZ(status);
   BZZ(expires);
+
+  challenge->t_expires = timestamp(challenge->expires);
 
 #undef BZZ
 
@@ -2033,7 +2049,7 @@ void Acme::OrderStart() {
 
   // Read account info from local memory, or query the server
   if (! ReadAccountInfo()) {
-    RequestNewAccount(config->acmeEmailAddress());
+    RequestNewAccount(config->acmeEmailAddress(), false);
     // RequestNewAccount(0);
 
     WriteAccountInfo();
@@ -2208,12 +2224,75 @@ void Acme::FinalizeOrder() {
 
 void Acme::ReadFinalizeReply(JsonObject &json) {
   ReadOrder(json);
-#if 0
-  const char *cert = json["certificate"];
-  order->certificate = cert ? strdup(cert) : 0;
-#endif
 }
 
+// Debug
 void Acme::setCertificate(const char *cert) {
   order->certificate = strdup(cert);
+}
+
+/*
+ * Convert timestamp from ACME (e.g. 2019-11-25T16:56:52Z) into time_t.
+ */
+time_t Acme::timestamp(const char *ts) {
+  const char *acme_timestamp = "%FT%TZ";
+  struct tm tms;
+  char *r = strptime(ts, acme_timestamp, &tms);
+  if (r == 0 || *r != 0)
+    return 0;	// Failed to scan
+  return mktime(&tms);
+}
+
+void Acme::ReadCertificate() {
+  int fnl = strlen(config->getFilePrefix()) + strlen(config->getAcmeCertificateFile()) + 3;
+  char *fn = (char *)malloc(fnl);
+  sprintf(fn, "%s/%s", config->getFilePrefix(), config->getAcmeCertificateFile());
+
+  certificate = (mbedtls_x509_crt *)calloc(1, sizeof(mbedtls_x509_crt));
+  mbedtls_x509_crt_init(certificate);
+  int ret = mbedtls_x509_crt_parse_file(certificate, fn);
+  if (ret == 0) {
+    ESP_LOGI(acme_tag, "%s: we have a certificate in %s", __FUNCTION__, fn);
+    ESP_LOGI(acme_tag, "Valid from %04d-%02d-%02d %02d:%02d:%02d to %04d-%02d-%02d %02d:%02d:%02d",
+      certificate->valid_from.year, certificate->valid_from.mon, certificate->valid_from.day,
+      certificate->valid_from.hour, certificate->valid_from.min, certificate->valid_from.sec,
+      certificate->valid_to.year, certificate->valid_to.mon, certificate->valid_to.day,
+      certificate->valid_to.hour, certificate->valid_to.min, certificate->valid_to.sec);
+#if 1
+    time_t vt = TimeMbedToTimestamp(certificate->valid_to);
+    struct tm *tmp = gmtime(&vt);
+
+    char x[40];
+    strftime(x, 40, "%FT%TZ", tmp);
+    ESP_LOGI(acme_tag, "Valid to (converted) : %s", x);
+#endif
+    return;
+  }
+
+  char buf[80];
+  mbedtls_strerror(ret, buf, sizeof(buf));
+  ESP_LOGE(acme_tag, "%s: could not read certificate from %s (error 0x%04x, %s)", __FUNCTION__, fn, -ret, buf);
+  mbedtls_x509_crt_free(certificate);
+  free(certificate);
+  certificate = 0;
+}
+
+/*
+ * Convert from mbedtls_x509_time to time_t
+ * FIX ME not sure if the hour is right
+ */
+time_t Acme::TimeMbedToTimestamp(mbedtls_x509_time t) {
+  struct tm tms;
+  tms.tm_year = t.year - 1900;
+  tms.tm_mon = t.mon - 1;
+  tms.tm_mday = t.day;
+  tms.tm_hour = t.hour;
+  tms.tm_min = t.min;
+  tms.tm_sec = t.sec;
+  tms.tm_isdst = false;
+
+  return mktime(&tms);
+}
+
+void Acme::RenewCertificate() {
 }

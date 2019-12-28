@@ -59,10 +59,11 @@ class Acme {
     void CertificateDownload();
 
     struct Certificate {
-      char *fullchain;
-      char *privkey;
-      char *chain;
-      char *cert;
+      mbedtls_x509_crt	*cert;
+      // char *fullchain;
+      // char *privkey;
+      // char *chain;
+      // char *cert;
     };
 
     Certificate *issueCertificate(char *domain);
@@ -71,7 +72,7 @@ class Acme {
     void setLocation(const char *);
 
   private:
-    const char *acme_tag = "Acme";
+    const char *acme_tag = "Acme";		// For ESP_LOGx calls
 
     //
     const char *acme_agent_header = "User-Agent";
@@ -95,11 +96,15 @@ class Acme {
     static esp_err_t NonceHttpEvent(esp_http_client_event_t *event);
     static esp_err_t HttpEvent(esp_http_client_event_t *event);
 
+    // Helper functions
+    time_t	timestamp(const char *);
+    time_t	TimeMbedToTimestamp(mbedtls_x509_time t);
+
+
     void	StoreFileOnWebserver(char *localfn, char *remotefn);
     char	*Base64(const char *);
     char	*Base64(const char *, int);
     char	*Unbase64(const char *s);
-    // char	*Signature(char *, char *);
     String	Signature(String pr, String pl, mbedtls_pk_context *ck);
     String	Signature(String, String);
     char	*MakeMessageJWK(char *url, char *payload, char *jwk);
@@ -113,15 +118,13 @@ class Acme {
     boolean	RequestNewNonce();
 
     mbedtls_pk_context	*GeneratePrivateKey();
-    // boolean	GeneratePrivateKey();
     boolean	ReadPrivateKey();
     mbedtls_pk_context	*ReadPrivateKey(const char *fn);
-    // boolean	ReadPrivateKey(const char *);
     void	WritePrivateKey();
     void	WritePrivateKey(const char *);
     void	WritePrivateKey(mbedtls_pk_context *pk, const char *fn);
 
-    void	RequestNewAccount(const char *contact);
+    void	RequestNewAccount(const char *contact, boolean onlyExisting);
     boolean	ReadAccountInfo();
     void	WriteAccountInfo();
     void	ReadAccount(JsonObject &);
@@ -151,6 +154,9 @@ class Acme {
 
     void	SetAcmeUserAgentHeader(esp_http_client_handle_t);
 
+    void	ReadCertificate();		// From local file
+    void	RenewCertificate();
+
     /*
      *
      */
@@ -169,42 +175,45 @@ class Acme {
     };
 
     struct Account {			// See ACME RFC § 7.1.2
-      char *status;
-      char **contact;
-      boolean termsOfServiceAgreed;
-      char *orders;
+      char	*status;
+      char	**contact;
+      boolean	termsOfServiceAgreed;
+      char	*orders;
       char	*key_type, *key_id, *key_e;
       char	*initialIp,
 		*createdAt;
+      time_t	t_createdAt;
     };
 
     struct Identifier {			// See ACME RFC § 7.1.3
-      char *_type;
-      char *value;
+      char		*_type;
+      char		*value;
     };
     struct Order {
-      char *status;
-      char *expires;	// timestamp
-      Identifier *identifiers;
-      char *notBefore;
-      char *notAfter;
-      char **authorizations;
-      char *finalize;
-      char *certificate;
+      char		*status;
+      char		*expires;	// timestamp
+      time_t		t_expires;
+      Identifier	*identifiers;
+      // char		*notBefore;
+      // char		*notAfter;
+      char		**authorizations;
+      char		*finalize;	// URL for us to call
+      char		*certificate;	// URL to download the certificate
     };
 
     struct ChallengeItem {
-      char *_type;
-      char *status;
-      char *url;
-      char *token;
+      char		*_type;
+      char		*status;
+      char		*url;
+      char		*token;
     };
 
     struct Challenge {
-      Identifier *identifiers;
-      char *status;
-      char *expires;
-      ChallengeItem *challenges;
+      Identifier	*identifiers;
+      char		*status;
+      char		*expires;
+      time_t		t_expires;
+      ChallengeItem	*challenges;
     };
 
     /*
@@ -220,12 +229,15 @@ class Acme {
     char	*reply_buffer;
     int		reply_buffer_len;
 
+    time_t	last_run;
+
     mbedtls_rsa_context		*rsa;
     mbedtls_ctr_drbg_context	*ctr_drbg;
     mbedtls_entropy_context	*entropy;
     mbedtls_pk_context		*accountkey;	// Account private key
     mbedtls_pk_context		*certkey;	// Certificate private key
-    mbedtls_md_context_t	mdctx;
+
+    mbedtls_x509_crt		*certificate;
 };
 
 extern Acme *acme;
