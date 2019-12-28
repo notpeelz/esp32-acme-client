@@ -60,19 +60,17 @@ Acme::Acme() {
   last_run = 0;
   certificate = 0;
 
-  if (config->runAcme()) {
-    ctr_drbg = (mbedtls_ctr_drbg_context *)calloc(1, sizeof(mbedtls_ctr_drbg_context));
-    mbedtls_ctr_drbg_init(ctr_drbg);
+  ctr_drbg = (mbedtls_ctr_drbg_context *)calloc(1, sizeof(mbedtls_ctr_drbg_context));
+  mbedtls_ctr_drbg_init(ctr_drbg);
 
-    entropy = (mbedtls_entropy_context *)calloc(1, sizeof(mbedtls_entropy_context));
-    mbedtls_entropy_init(entropy);
+  entropy = (mbedtls_entropy_context *)calloc(1, sizeof(mbedtls_entropy_context));
+  mbedtls_entropy_init(entropy);
 
-    int err;
-    if ((err = mbedtls_ctr_drbg_seed(ctr_drbg, mbedtls_entropy_func, entropy, NULL, 0))) {
-      char buf[80];
-      mbedtls_strerror(err, buf, sizeof(buf));
-      ESP_LOGE(acme_tag, "mbedtls_ctr_drbg_seed failed %d %s", err, buf);
-    }
+  int err;
+  if ((err = mbedtls_ctr_drbg_seed(ctr_drbg, mbedtls_entropy_func, entropy, NULL, 0))) {
+    char buf[80];
+    mbedtls_strerror(err, buf, sizeof(buf));
+    ESP_LOGE(acme_tag, "mbedtls_ctr_drbg_seed failed %d %s", err, buf);
   }
 
   ESP_LOGI(acme_tag, "ACME Configuration summary : %s", config->runAcme() ? "active" : "disabled");
@@ -105,8 +103,9 @@ Acme::Acme() {
 }
 
 Acme::~Acme() {
-  CleanupAcmeDirectory();
   ClearAccount();
+  ClearOrder();
+  CleanupAcmeDirectory();
   if (nonce)
     free(nonce);
   if (reply_buffer)
@@ -193,15 +192,12 @@ void Acme::NetworkConnected(void *ctx, system_event_t *event) {
     WriteOrderInfo();
   }
 #endif
-  // CleanupAcmeDirectory();
 }
 
 void Acme::NetworkDisconnected(void *ctx, system_event_t *event) {
 }
 
 void Acme::loop(time_t now) {
-  if (! config->runAcme())
-    return;
   // Only do stuff on first call or wait an hour
   if ((last_run != 0) && (now - last_run < 3600))
       return;
@@ -633,7 +629,7 @@ boolean Acme::RequestNewNonce() {
     return false;
   }
 
-  ESP_LOGI(acme_tag, "%s(%s)", __FUNCTION__, directory->newNonce);
+  ESP_LOGD(acme_tag, "%s(%s)", __FUNCTION__, directory->newNonce);
 
   memset(&httpc, 0, sizeof(httpc));
   httpc.url = directory->newNonce;
@@ -684,12 +680,11 @@ void Acme::setNonce(char *s) {
   ESP_LOGD(acme_tag, "%s(%s)", __FUNCTION__, nonce);
 }
 
+// This is needed because the location field is passed back in an HTTP header
 void Acme::setLocation(const char *s) {
   if (location)
     free(location);
   location = strdup(s);
-
-  ESP_LOGD(acme_tag, "%s(%s)", __FUNCTION__, location);
 }
 
 /*
@@ -942,7 +937,6 @@ void Acme::ClearAccount() {
     if (account->key_type) free(account->key_type);
     if (account->key_id) free(account->key_id);
     if (account->key_e) free(account->key_e);
-    // if (account->key) free(account->key);
     if (account->initialIp) free(account->initialIp);
     if (account->createdAt) free(account->createdAt);
     free(account);
@@ -951,6 +945,29 @@ void Acme::ClearAccount() {
     if (location) free(location);
     location = 0;
   }
+}
+
+void Acme::ClearOrder() {
+  if (order) {
+    if (order->status) free(order->status);
+    if (order->expires) free(order->expires);
+    if (order->finalize) free(order->finalize);
+    if (order->certificate) free(order->certificate);
+    if (order->identifiers) {
+      for (int i=0; order->identifiers[i]._type; i++) {
+        free(order->identifiers[i]._type);
+        free(order->identifiers[i].value);
+      }
+      free(order->identifiers);
+    }
+    if (order->authorizations) {
+      for (int i=0; order->authorizations[i]; i++)
+        free(order->authorizations[i]);
+      free(order->authorizations);
+    }
+  }
+  free(order);
+  order = 0;
 }
 
 /*
@@ -1978,6 +1995,7 @@ void Acme::StoreFileOnWebserver(char *localfn, char *remotefn) {
 #include "SPIFFS.h"
 #include "FS.h"
 void Acme::OrderRemove(char *dir) {
+  ClearOrder();
   SPIFFS.begin();
 
   if (SPIFFS.remove("/spiffs/acme/order.json"))
@@ -2294,5 +2312,12 @@ time_t Acme::TimeMbedToTimestamp(mbedtls_x509_time t) {
   return mktime(&tms);
 }
 
+/*
+ * RFC 8555 §7.4.2 :
+ *  If the client wishes to obtain a renewed certificate, the client initiates a new order process to request one.
+ *
+ * This implies that we reuse existing code, but make sure that it can work while we have an existing certificate,
+ * and replacing the old with the new only happens when the new certificate is successfully downloaded.
+ */
 void Acme::RenewCertificate() {
 }
