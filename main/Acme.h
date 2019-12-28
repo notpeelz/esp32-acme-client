@@ -139,7 +139,6 @@ class Acme {
     char	*Base64(const char *);
     char	*Base64(const char *, int);
     char	*Unbase64(const char *s);
-    String	Signature(String pr, String pl, mbedtls_pk_context *ck);
     String	Signature(String, String);
     char	*MakeMessageJWK(char *url, char *payload, char *jwk);
     char	*MakeJWK();

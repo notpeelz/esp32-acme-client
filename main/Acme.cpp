@@ -142,6 +142,7 @@ void Acme::NetworkConnected(void *ctx, system_event_t *event) {
   QueryAcmeDirectory();
   RequestNewNonce();
   RequestNewAccount(config->acmeEmailAddress(), true);
+
   ReadCertificate();
 
 #if 0
@@ -467,74 +468,6 @@ String Acme::Signature(String pr, String pl) {
   return rs;
 }
 
-// Similar, but sign with another key
-String Acme::Signature(String pr, String pl, mbedtls_pk_context *ck) {
-  int ret;
-  char buf[80];
-
-  ESP_LOGD(acme_tag, "PR %s", pr.c_str());
-  ESP_LOGD(acme_tag, "PL %s", pl.c_str());
-
-  int len = strlen(pr.c_str()) + strlen(pl.c_str()) + 4;
-  char *bb = (char *)malloc(len);
-  sprintf(bb, "%s.%s", pr.c_str(), pl.c_str());
-  ESP_LOGD(acme_tag, "signing input (length %d) {%s}", strlen((char *)bb), bb);
-
-  // Generate a digital signature
-  unsigned char *signature = (unsigned char *)calloc(2, mbedtls_pk_get_len(ck));
-  if (! signature) {
-    ESP_LOGE(acme_tag, "calloc failed, mbedtls_pk_get_len %d", mbedtls_pk_get_len(ck));
-    free(bb);
-    return (String)0;
-  }
-  int hash_size = 32;
-  unsigned char *hash = (unsigned char *)calloc(1, hash_size);
-  if (hash == 0) {
-    ESP_LOGE(acme_tag, "calloc(32) failed");
-    free(signature);
-    free(bb);
-    return (String)0;
-  }
-
-  const mbedtls_md_info_t *mdi = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
-  if (!mdi) {
-    ESP_LOGE("Acme", "mbedtls_hash_get_len: md_info not found");
-    free(signature);
-    free(hash);
-    return (String)0;
-  }
-  ret = mbedtls_md(mdi, (const unsigned char *)bb, strlen(bb), (unsigned char *)hash);
-  free(bb); bb = 0;
-  if (ret != 0) {
-    mbedtls_strerror(ret, buf, sizeof(buf));
-    ESP_LOGE(acme_tag, "mbedtls_hash_fast failed %s (0x%04x)", buf, -ret);
-    free(signature);
-    free(hash);
-    return (String)0;
-  }
-
-  size_t signature_size = 0;
-  ret = mbedtls_pk_sign(ck, MBEDTLS_MD_SHA256, hash, hash_size, signature, &signature_size, mbedtls_ctr_drbg_random, ctr_drbg);
-  if (ret != 0) {
-    mbedtls_strerror(ret, buf, sizeof(buf));
-    ESP_LOGE(acme_tag, "mbedtls_pk_sign failed %s (0x%04x)", buf, -ret);
-    free(signature);
-    free(hash);
-    return (String)0;
-  }
-
-  ESP_LOGD(acme_tag, "%s: signature length %d", __FUNCTION__, strlen((char *)signature));
-  ESP_LOGD(acme_tag, "%s: signature size %d", __FUNCTION__, signature_size);
-
-  // Base64-encode and return
-  char *s = Base64((char *)signature);
-  free(signature);
-
-  String rs = String(s);
-  free(s);
-  return rs;
-}
-
 /***************************************************
  * And now for real ACME ...
  *
@@ -711,7 +644,7 @@ mbedtls_pk_context *Acme::GeneratePrivateKey() {
 }
 
 /*
- * Read a private key from a file
+ * Read a private key from a file, caller can specify file name.
  * Prepends our path prefix prior to use.
  */
 mbedtls_pk_context *Acme::ReadPrivateKey(const char *ifn) {
@@ -739,6 +672,10 @@ mbedtls_pk_context *Acme::ReadPrivateKey(const char *ifn) {
   return pk;
 }
 
+/*
+ * Write a private key to a file, caller can specify file name.
+ * Prepends our path prefix prior to use.
+ */
 void Acme::WritePrivateKey(mbedtls_pk_context *pk, const char *ifn) {
   int fnlen = strlen(config->getFilePrefix()) + strlen(ifn) + 3;
   char *fn = (char *)malloc(fnlen);
@@ -771,6 +708,9 @@ void Acme::WritePrivateKey(mbedtls_pk_context *pk, const char *ifn) {
   free(fn);
 }
 
+/*
+ * Write a private key to the file name from Config.
+ */
 void Acme::WritePrivateKey() {
   int ret, len;
   char buf[80];
@@ -848,7 +788,7 @@ void Acme::RequestNewAccount(const char *contact, boolean onlyExisting) {
     free(reply);
     return;
   }
-  ESP_LOGI(acme_tag, "%s : JSON opened", __FUNCTION__);
+  ESP_LOGD(acme_tag, "%s : JSON opened", __FUNCTION__);
 
   const char *reply_status = root[acme_json_status];
   if (reply_status && strcmp(reply_status, acme_status_valid) != 0) {
@@ -1121,7 +1061,7 @@ void Acme::RequestNewOrder(const char *url) {
     free(reply);
     return;
   }
-  ESP_LOGI(acme_tag, "%s : JSON opened", __FUNCTION__);
+  ESP_LOGD(acme_tag, "%s : JSON opened", __FUNCTION__);
 
   const char *reply_status = root[acme_json_status];
   if (reply_status && reply_status[0] == '4') {
@@ -1363,7 +1303,6 @@ boolean Acme::ValidateOrderFTP() {
   sprintf(remotefn, "%s%s%s", CONFIG_FTP_WEBSERVER_PATH, well_known, token);
 
   StoreFileOnWebserver(localfn, remotefn);
-  free(remotefn);
 
   // Alert the server
   boolean r = ValidateAlertServer();
@@ -1371,6 +1310,10 @@ boolean Acme::ValidateOrderFTP() {
   // Remove the file
   // FIXME Can't find a API call (except when accessing SPIFFS) to remove a file in the ESP-IDF VFS layer
 
+  // Remove the file from FTP server
+  RemoveFileFromWebserver(remotefn);
+
+  free(remotefn);
   free(localfn);
   return r;
 }
@@ -1611,8 +1554,10 @@ char *Acme::JWSThumbprint() {
   char *e64 = Base64((char *)q, ne);
   ESP_LOGI(acme_tag, "RSA key E(64) : %s, N(64) : %s", e64, n64);
 
-  // White-space-less JWK format, as described
+  // White-space-less JWK format, as described.
+  // Don't change this even a little bit
   const char *format = "{\"e\":\"%s\",\"kty\":\"RSA\",\"n\":\"%s\"}";
+
   char *t = (char *)malloc(strlen(format) + 2 * nl + ne + 4);		// hack : 2*, otherwise crash due to alloc(280), but use 370
   sprintf(t, format, e64, n64);
   free(N);
@@ -1629,7 +1574,7 @@ char *Acme::JWSThumbprint() {
 
   const mbedtls_md_info_t *mdi = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
   if (!mdi) {
-    ESP_LOGE("Acme", "mbedtls_hash_get_len: md_info not found");
+    ESP_LOGE("Acme", "mbedtls_md_info_from_type: md_info not found");
     free(hash);
     free(t);
     return 0;
@@ -1967,6 +1912,26 @@ void Acme::StoreFileOnWebserver(char *localfn, char *remotefn) {
     free(b);
   } else {
     ftpc->ftpClientPut(localfn, remotefn, FTP_CLIENT_BINARY, nb);
+  }
+  ftpc->ftpClientQuit(nb);
+}
+
+void Acme::RemoveFileFromWebserver(char *remotefn) {
+  NetBuf_t	*nb = 0;
+
+  ESP_LOGI(acme_tag, "%s(%s)", __FUNCTION__, remotefn);
+
+  FtpClient	*ftpc = getFtpClient();
+  ftpc->ftpClientConnect(CONFIG_FTP_WEBSERVER_IP, 21, &nb);
+  ftpc->ftpClientLogin(CONFIG_FTP_WEBSERVER_FTPUSER, CONFIG_FTP_WEBSERVER_FTPPASS, nb);
+  if (remotefn[0] != '/') {
+    int len = strlen(remotefn) + strlen(CONFIG_FTP_WEBSERVER_PATH) + 4;
+    char *b = (char *)malloc(len);
+    sprintf(b, "%s/%s", CONFIG_FTP_WEBSERVER_PATH, remotefn);
+    ftpc->ftpClientDelete(b, nb);
+    free(b);
+  } else {
+    ftpc->ftpClientDelete(remotefn, nb);
   }
   ftpc->ftpClientQuit(nb);
 }
