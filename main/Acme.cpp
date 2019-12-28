@@ -105,6 +105,7 @@ Acme::Acme() {
 Acme::~Acme() {
   ClearAccount();
   ClearOrder();
+  ClearChallenge();
   CleanupAcmeDirectory();
   if (nonce)
     free(nonce);
@@ -198,7 +199,21 @@ void Acme::NetworkConnected(void *ctx, system_event_t *event) {
 void Acme::NetworkDisconnected(void *ctx, system_event_t *event) {
 }
 
+/*
+ * This is supposed to get called periodically to continue work.
+ * The parameter should be the current timestamp.
+ *
+ * Two types of action occur :
+ *  - trigger the ACME request engine (finite state machine) to advance order status
+ *  - check if the current certificate should be renewed, and cause that (which stumbles into the above)
+ *    The last_run member ensures we either do this at reboot, or only once per hour.
+ */
 void Acme::loop(time_t now) {
+  if (order && (strcmp(order->status, acme_status_valid) != 0 && strcmp(order->status, acme_status_ready) != 0)) {
+    AcmeProcess();
+    return;		// FIXME ? Only look into renewal if we're not processing here.
+  }
+
   // Only do stuff on first call or wait an hour
   if ((last_run != 0) && (now - last_run < 3600))
       return;
@@ -214,6 +229,10 @@ void Acme::loop(time_t now) {
   if (until - month < now) {
     RenewCertificate();
   }
+}
+
+void Acme::AcmeProcess() {
+  ESP_LOGI(acme_tag, "%s", __FUNCTION__);
 }
 
 /*
@@ -456,11 +475,10 @@ String Acme::Signature(String pr, String pl) {
     return (String)0;
   }
 
-  ESP_LOGD(acme_tag, "%s: signature length %d", __FUNCTION__, strlen((char *)signature));
   ESP_LOGD(acme_tag, "%s: signature size %d", __FUNCTION__, signature_size);
 
   // Base64-encode and return
-  char *s = Base64((char *)signature);
+  char *s = Base64((char *)signature, signature_size);
   free(signature);
 
   String rs = String(s);
@@ -610,7 +628,7 @@ void Acme::setNonce(char *s) {
     free(nonce);
   nonce = strdup(s);
 
-  ESP_LOGD(acme_tag, "%s(%s)", __FUNCTION__, nonce);
+  ESP_LOGI(acme_tag, "%s(%s)", __FUNCTION__, nonce);
 }
 
 // This is needed because the location field is passed back in an HTTP header
@@ -905,9 +923,35 @@ void Acme::ClearOrder() {
         free(order->authorizations[i]);
       free(order->authorizations);
     }
+
+    free(order);
+    order = 0;
   }
-  free(order);
-  order = 0;
+}
+
+void Acme::ClearChallenge() {
+  if (challenge) {
+    if (challenge->status) free(challenge->status);
+    if (challenge->expires) free(challenge->expires);
+    if (challenge->identifiers) {
+      for (int i=0; challenge->identifiers[i]._type; i++) {
+        free(challenge->identifiers[i]._type);
+        free(challenge->identifiers[i].value);
+      }
+      free(challenge->identifiers);
+    }
+    if (challenge->challenges) {
+      for (int i=0; challenge->challenges[i]._type; i++) {
+        free(challenge->challenges[i]._type);
+        free(challenge->challenges[i].status);
+        free(challenge->challenges[i].url);
+        free(challenge->challenges[i].token);
+      }
+      free(challenge->challenges);
+    }
+    free(challenge);
+    challenge = 0;
+  }
 }
 
 /*
@@ -977,7 +1021,7 @@ void Acme::WriteAccountInfo() {
   sprintf(fn, "%s/%s", config->getFilePrefix(), config->getAcmeAccountFileName());
   FILE *f = fopen(fn, "w");
   if (f == NULL) {
-    ESP_LOGE(acme_tag, "Could write account info into %s, %s", fn, strerror(errno));
+    ESP_LOGE(acme_tag, "Could not write account info into %s, %s", fn, strerror(errno));
     free(fn);
     return;
   }
@@ -1312,6 +1356,9 @@ boolean Acme::ValidateOrderFTP() {
 
   // Remove the file from FTP server
   RemoveFileFromWebserver(remotefn);
+
+  // Remove our in-memory record
+  ClearChallenge();
 
   free(remotefn);
   free(localfn);
@@ -2077,6 +2124,11 @@ void Acme::CertificateDownload() {
   DownloadCertificate();
 }
 
+/*
+ * A Certificate Signing Request (CSR) is a required parameter to the Finalize query.
+ * It can be used to add administrative data to the process, and is validated thoroughly.
+ * One such additional parameter is the domain private key.
+ */
 char *Acme::GenerateCSR() {
   const int buflen = 4096;	// This is used in mbedtls_x509 functions internally
   int ret;
@@ -2089,7 +2141,7 @@ char *Acme::GenerateCSR() {
   // mbedtls_x509write_csr_set_key_usage(&req, MBEDTLS_X509_NS_CERT_TYPE_SSL_CLIENT);	// Not set by default
   mbedtls_x509write_csr_set_key(&req, certkey);
 
-  // Specify our URL
+  // Specify our URL, as the "common name" field.
   int snlen = strlen(config->acmeUrl()) + 4;
   char *sn = (char *)malloc(snlen);
   sprintf(sn, "CN=%s", config->acmeUrl());
@@ -2129,8 +2181,15 @@ char *Acme::GenerateCSR() {
   return csr;
 }
 
+/*
+ * Move the Order from "ready" to "pending" or "valid" state.
+ *
+ * This step requires passing the CSR, and will cause the ACME server to generate a certificate.
+ * One of the results of this query is a URL for the certificate, which we can then use to download it.
+ *
+ * We're calling ReadFinalizeReply() at the end, but this is the same as ReadOrder().
+ */
 void Acme::FinalizeOrder() {
-
   if (order == 0 || order->finalize == 0) {
     ESP_LOGE(acme_tag, "%s: null", __FUNCTION__);
     return;
@@ -2205,6 +2264,9 @@ time_t Acme::timestamp(const char *ts) {
   return mktime(&tms);
 }
 
+/*
+ * Read the certificate on local storage
+ */
 void Acme::ReadCertificate() {
   int fnl = strlen(config->getFilePrefix()) + strlen(config->getAcmeCertificateFile()) + 3;
   char *fn = (char *)malloc(fnl);

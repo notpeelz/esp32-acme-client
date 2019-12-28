@@ -175,6 +175,7 @@ void loop()
   }
 
   network->loop(nowts);
+  acme->loop(nowts);
 }
 
 extern "C" {

@@ -50,6 +50,7 @@ class Acme {
     void NetworkDisconnected(void *ctx, system_event_t *event);
 
     void loop(time_t now);
+    void AcmeProcess();				// Run the ACME client FSM (finite state machine)
 
     void OrderRemove(char *);
     void OrderStart();
@@ -97,7 +98,11 @@ class Acme {
     const char	*acme_json_authorizations =	"authorizations";
 
     // Status
-    const char	*acme_status_valid =	"valid";
+    const char	*acme_status_valid =		"valid";
+    const char	*acme_status_ready =		"ready";
+    const char	*acme_status_processing =	"processing";
+    const char	*acme_status_pending =		"pending";
+    const char	*acme_status_invalid =		"invalid";
 
     // Identify ourselves as :
     const char *acme_agent_template = "EspAlarm ACME client/0.1, built on esp-idf %s (https://esp32-acme-client.sourceforge.io)";
@@ -180,6 +185,7 @@ class Acme {
     bool	CreateValidationFile(const char *localfn, const char *token);
     void	ReadChallenge(JsonObject &);
     boolean	ReadAuthorizationReply(JsonObject &json);
+    void	ClearChallenge();
 
     void	FinalizeOrder();
     void	DownloadCertificate();
