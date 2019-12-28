@@ -850,10 +850,10 @@ void Acme::RequestNewAccount(const char *contact, boolean onlyExisting) {
   }
   ESP_LOGI(acme_tag, "%s : JSON opened", __FUNCTION__);
 
-  const char *reply_status = root["status"];
-  if (reply_status && strcmp(reply_status, "valid") != 0) {
-    const char *reply_type = root["type"];
-    const char *reply_detail = root["detail"];
+  const char *reply_status = root[acme_json_status];
+  if (reply_status && strcmp(reply_status, acme_status_valid) != 0) {
+    const char *reply_type = root[acme_json_type];
+    const char *reply_detail = root[acme_json_detail];
 
     ESP_LOGE(acme_tag, "%s: failure %s %s %s", __FUNCTION__, reply_status, reply_type, reply_detail);
 
@@ -1047,18 +1047,18 @@ void Acme::WriteAccountInfo() {
 
   DynamicJsonBuffer jb;
   JsonObject &jo = jb.createObject();
-  jo["status"] = account->status;
-  jo["location"] = location;
+  jo[acme_json_status] = account->status;
+  jo[acme_json_location] = location;
 
   // contact array must be NULL terminated
-  JsonArray &jca = jo.createNestedArray("contact");
+  JsonArray &jca = jo.createNestedArray(acme_json_contact);
   for (int i=0; account->contact[i]; i++)
     jca.add(account->contact[i]);
 
-  JsonObject &jk = jo.createNestedObject("key");
-  jk["kty"] = account->key_type;
-  jk["n"] = account->key_id;
-  jk["e"] = account->key_e;
+  JsonObject &jk = jo.createNestedObject(acme_json_key);
+  jk[acme_json_kty] = account->key_type;
+  jk[acme_json_n] = account->key_id;
+  jk[acme_json_e] = account->key_e;
 
   char *output = (char *)malloc(1536);	// FIX ME
   jo.printTo(output, 1536);		// FIX ME
@@ -1123,10 +1123,10 @@ void Acme::RequestNewOrder(const char *url) {
   }
   ESP_LOGI(acme_tag, "%s : JSON opened", __FUNCTION__);
 
-  const char *reply_status = root["status"];
+  const char *reply_status = root[acme_json_status];
   if (reply_status && reply_status[0] == '4') {
-    const char *reply_type = root["type"];
-    const char *reply_detail = root["detail"];
+    const char *reply_type = root[acme_json_type];
+    const char *reply_detail = root[acme_json_detail];
 
     ESP_LOGE(acme_tag, "%s: failure %s %s %s", __FUNCTION__, reply_status, reply_type, reply_detail);
 
@@ -1222,21 +1222,21 @@ void Acme::WriteOrderInfo() {
 
   DynamicJsonBuffer jb;
   JsonObject &jo = jb.createObject();
-  jo["status"] = order->status;
-  jo["expires"] = order->expires;
-  if (order->finalize) jo["finalize"] = order->finalize;
-  if (order->certificate) jo["certificate"] = order->certificate;
+  jo[acme_json_status] = order->status;
+  jo[acme_json_expires] = order->expires;
+  if (order->finalize) jo[acme_json_finalize] = order->finalize;
+  if (order->certificate) jo[acme_json_certificate] = order->certificate;
 
   // identifiers array must be NULL terminated
-  JsonArray &jia = jo.createNestedArray("identifiers");
+  JsonArray &jia = jo.createNestedArray(acme_json_identifiers);
   for (int i=0; order->identifiers[i]._type != 0 || order->identifiers[i].value != 0; i++) {
     JsonObject &jie = jia.createNestedObject();
-    jie["type"] = order->identifiers[i]._type;
-    jie["value"] = order->identifiers[i].value;
+    jie[acme_json_type] = order->identifiers[i]._type;
+    jie[acme_json_value] = order->identifiers[i].value;
   }
 
   // authorizations array must be NULL terminated
-  JsonArray &jaa = jo.createNestedArray("authorizations");
+  JsonArray &jaa = jo.createNestedArray(acme_json_authorizations);
   for (int i=0; order->authorizations[i]; i++)
     jaa.add(order->authorizations[i]);
 
@@ -1334,13 +1334,13 @@ boolean Acme::ValidateOrderFTP() {
   const char *token = 0;
   http01_ix = -1;
   for (int i=0; challenge && challenge->challenges && challenge->challenges[i].status; i++) {
-    if (strcmp(challenge->challenges[i]._type, "http-01") == 0) {
+    if (strcmp(challenge->challenges[i]._type, acme_http_01) == 0) {
       token = challenge->challenges[i].token;
       http01_ix = i;
     }
   }
   if (token == 0) {
-    ESP_LOGE(acme_tag, "%s: no http-01 token found, aborting authorization", __FUNCTION__);
+    ESP_LOGE(acme_tag, "%s: no %s token found, aborting authorization", __FUNCTION__, acme_http_01);
     return false;
   }
   ESP_LOGD(acme_tag, "%s: token %s", __FUNCTION__, token);
@@ -1386,7 +1386,7 @@ void Acme::ValidateOrderLocal() {
 boolean Acme::ValidateAlertServer() {
   ESP_LOGI(acme_tag, "%s", __FUNCTION__);
   if (http01_ix < 0) {
-    ESP_LOGE(acme_tag, "%s: no http-01 found", __FUNCTION__);
+    ESP_LOGE(acme_tag, "%s: no %s found", __FUNCTION__, acme_http_01);
     return false;
   }
 
@@ -1414,10 +1414,10 @@ boolean Acme::ValidateAlertServer() {
   }
   ESP_LOGD(acme_tag, "%s : JSON opened", __FUNCTION__);
 
-  const char *reply_status = root["status"];
+  const char *reply_status = root[acme_json_status];
   if (reply_status && reply_status[0] == '4') {
-    const char *reply_type = root["type"];
-    const char *reply_detail = root["detail"];
+    const char *reply_type = root[acme_json_type];
+    const char *reply_detail = root[acme_json_detail];
 
     ESP_LOGE(acme_tag, "%s: failure %s %s %s", __FUNCTION__, reply_status, reply_type, reply_detail);
 
@@ -1501,37 +1501,16 @@ void Acme::DownloadCertificate() {
  * }
  */
 boolean Acme::ReadAuthorizationReply(JsonObject &json) {
-  // const char *_type = json["type"];
-  const char *status = json["status"];
-  // const char *url = json["url"];	// Not used
-  // const char *token = json["token"];
+  const char *status = json[acme_json_status];
 
-  if (strcmp(status, "valid") != 0) {
+  if (strcmp(status, acme_status_valid) != 0) {
     return false;
   }
-#if 1
+
   free(order->status);
   order->status = strdup(status);
   WriteOrderInfo();
   return true;
-#else
-  // This only works well if we have all these structures filled....
-
-  if (order == 0 || challenge == 0 || challenge->challenges == 0) {
-    return false;
-  }
-
-  for (int i=0; challenge->challenges[i]._type; i++) {
-    if (strcmp(challenge->challenges[i]._type, _type) == 0) {
-      if (strcmp(challenge->challenges[i].token, token) == 0) {
-        free(order->status);
-	order->status = strdup(status);
-	return true;
-      }
-    }
-  }
-#endif
-  return false;
 }
 
 /*
@@ -1586,10 +1565,10 @@ void Acme::DownloadAuthorizationResource() {
   }
   ESP_LOGD(acme_tag, "%s : JSON opened", __FUNCTION__);
 
-  const char *reply_status = root["status"];
+  const char *reply_status = root[acme_json_status];
   if (reply_status && reply_status[0] == '4') {
-    const char *reply_type = root["type"];
-    const char *reply_detail = root["detail"];
+    const char *reply_type = root[acme_json_type];
+    const char *reply_detail = root[acme_json_detail];
 
     ESP_LOGE(acme_tag, "%s: failure %s %s %s", __FUNCTION__, reply_status, reply_type, reply_detail);
 
@@ -1726,10 +1705,10 @@ void Acme::ReadChallenge(JsonObject &json) {
   challenge->challenges[jca.size()].url = 0;
   challenge->challenges[jca.size()].token = 0;
   for (int i=0; i<jca.size(); i++) {
-    const char *ct = jca[i]["type"];
-    const char *cs = jca[i]["status"];
-    const char *cu = jca[i]["url"];
-    const char *ck = jca[i]["token"];
+    const char *ct = jca[i][acme_json_type];
+    const char *cs = jca[i][acme_json_status];
+    const char *cu = jca[i][acme_json_url];
+    const char *ck = jca[i][acme_json_token];
 
     challenge->challenges[i]._type = strdup(ct);
     challenge->challenges[i].status = strdup(cs);
@@ -2221,10 +2200,10 @@ void Acme::FinalizeOrder() {
   }
   ESP_LOGD(acme_tag, "%s : JSON opened", __FUNCTION__);
 
-  const char *reply_status = root["status"];
+  const char *reply_status = root[acme_json_status];
   if (reply_status && reply_status[0] == '4') {
-    const char *reply_type = root["type"];
-    const char *reply_detail = root["detail"];
+    const char *reply_type = root[acme_json_type];
+    const char *reply_detail = root[acme_json_detail];
 
     ESP_LOGE(acme_tag, "%s: failure %s %s %s", __FUNCTION__, reply_status, reply_type, reply_detail);
 

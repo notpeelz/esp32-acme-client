@@ -75,6 +75,29 @@ class Acme {
     const char *acme_accept_header = "Accept";
     const char *acme_accept_pem_chain = "application/pem-certificate-chain";
     const char *well_known = "/.well-known/acme-challenge/";
+    const char *acme_http_01 = "http-01";
+
+    // JSON
+    const char	*acme_json_status =		"status";
+    const char	*acme_json_type =		"type";
+    const char	*acme_json_detail =		"detail";
+    const char	*acme_json_value =		"value";
+    const char	*acme_json_url =		"url";
+    const char	*acme_json_token =		"token";
+    const char	*acme_json_location =		"location";
+    const char	*acme_json_contact =		"contact";
+    const char	*acme_json_key =		"key";
+    const char	*acme_json_kty =		"kty";
+    const char	*acme_json_n =			"n";
+    const char	*acme_json_e =			"e";
+    const char	*acme_json_expires =		"expires";
+    const char	*acme_json_finalize =		"finalize";
+    const char	*acme_json_certificate =	"certificate";
+    const char	*acme_json_identifiers =	"identifiers";
+    const char	*acme_json_authorizations =	"authorizations";
+
+    // Status
+    const char	*acme_status_valid =	"valid";
 
     // Identify ourselves as :
     const char *acme_agent_template = "EspAlarm ACME client/0.1, built on esp-idf %s (https://esp32-acme-client.sourceforge.io)";
