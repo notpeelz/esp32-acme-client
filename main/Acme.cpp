@@ -156,17 +156,20 @@ void Acme::NetworkConnected(void *ctx, system_event_t *event) {
       valid = true;
     } else if (strcmp(order->status, "pending") == 0) {
       valid = ValidateOrder();
+      WriteOrderInfo();
     }
   }
 
   if (order && order->status) {
     if (strcmp(order->status, "ready") == 0) {
       FinalizeOrder();
+      WriteOrderInfo();
     }
   }
 
   if (order && order->certificate) {
     DownloadCertificate();
+    WriteOrderInfo();
   }
 
   // CleanupAcmeDirectory();
@@ -626,37 +629,10 @@ boolean Acme::RequestNewNonce() {
 }
 
 esp_err_t Acme::NonceHttpEvent(esp_http_client_event_t *event) {
-  const char *acme_nonce_header = "Replay-Nonce";
-  // ESP_LOGD("Acme", "%s: event id %d", __FUNCTION__, event->event_id);
-
-  switch (event->event_id) {
-  case HTTP_EVENT_ON_HEADER:
+  if (event->event_id == HTTP_EVENT_ON_HEADER) {
     ESP_LOGD("Acme", "%s: header %s value %s", __FUNCTION__, event->header_key, event->header_value);
     if (strcmp(event->header_key, acme_nonce_header) == 0)
       acme->setNonce(event->header_value);
-    break;
-#if 0
-  case HTTP_EVENT_ERROR:
-    ESP_LOGI("Acme", "%s HTTP_EVENT_ERROR", __FUNCTION__);
-    break;
-  case HTTP_EVENT_ON_CONNECTED:
-    ESP_LOGI("Acme", "%s HTTP_EVENT_ON_CONNECTED", __FUNCTION__);
-    break;
-  case HTTP_EVENT_HEADER_SENT:
-    ESP_LOGI("Acme", "%s HTTP_EVENT_HEADER_SENT", __FUNCTION__);
-    break;
-  case HTTP_EVENT_ON_DATA:
-    ESP_LOGI("Acme", "%s HTTP_EVENT_ON_DATA", __FUNCTION__);
-    break;
-  case HTTP_EVENT_ON_FINISH:
-    ESP_LOGI("Acme", "%s HTTP_EVENT_ON_FINISH", __FUNCTION__);
-    break;
-  case HTTP_EVENT_DISCONNECTED:
-    ESP_LOGI("Acme", "%s HTTP_EVENT_DISCONNECTED", __FUNCTION__);
-    break;
-#endif
-  default:
-    break;
   }
   return ESP_OK;
 }
@@ -825,7 +801,7 @@ void Acme::RequestNewAccount(const char *contact) {
   }
   ESP_LOGD(acme_tag, "%s", msg);
 
-  char *reply = PerformWebQuery(directory->newAccount, msg, "application/jose+json", 0);
+  char *reply = PerformWebQuery(directory->newAccount, msg, acme_jose_json, 0);
   free(msg);
   if (reply) {
     ESP_LOGI(acme_tag, "%s PerformWebQuery -> %s", __FUNCTION__, reply);
@@ -1089,7 +1065,7 @@ void Acme::RequestNewOrder(const char *url) {
   }
   ESP_LOGI(acme_tag, "%s -> %s", __FUNCTION__, msg);
 
-  char *reply = PerformWebQuery(directory->newOrder, msg, "application/jose+json", 0);
+  char *reply = PerformWebQuery(directory->newOrder, msg, acme_jose_json, 0);
   // free(msg);
   if (reply) {
     ESP_LOGI(acme_tag, "PerformWebQuery -> %s", reply);
@@ -1208,7 +1184,8 @@ void Acme::WriteOrderInfo() {
   JsonObject &jo = jb.createObject();
   jo["status"] = order->status;
   jo["expires"] = order->expires;
-  jo["finalize"] = order->finalize;
+  if (order->finalize) jo["finalize"] = order->finalize;
+  if (order->certificate) jo["certificate"] = order->certificate;
 
   // identifiers array must be NULL terminated
   JsonArray &jia = jo.createNestedArray("identifiers");
@@ -1250,7 +1227,7 @@ void Acme::ReadOrder(JsonObject &json) {
     ESP_LOGD(acme_tag, "%s : reading %s", __FUNCTION__, #x);			\
     const char *x = json[#x];							\
     if (x) {									\
-      ESP_LOGD(acme_tag, "%s : read %s as %s", __FUNCTION__, #x, x);		\
+      ESP_LOGI(acme_tag, "%s : read %s as %s", __FUNCTION__, #x, x);		\
       order->x = strdup(x);							\
     } else {									\
       ESP_LOGD(acme_tag, "%s : no %s read", __FUNCTION__, #x);			\
@@ -1261,7 +1238,7 @@ void Acme::ReadOrder(JsonObject &json) {
 #define	BZZ2(x,y)								\
   {										\
     const char *x = json["key"][#y];						\
-    ESP_LOGD(acme_tag, "%s: read %s as %s", __FUNCTION__, #y, x);		\
+    ESP_LOGI(acme_tag, "%s: read %s as %s", __FUNCTION__, #y, x);		\
     if (x)									\
       order->x = strdup(x);							\
     else									\
@@ -1271,6 +1248,7 @@ void Acme::ReadOrder(JsonObject &json) {
   BZZ(status);
   BZZ(expires);
   BZZ(finalize);
+  BZZ(certificate);
 
 #undef BZZ
 #undef BZZ2
@@ -1388,7 +1366,7 @@ boolean Acme::ValidateAlertServer() {
   ESP_LOGD(acme_tag, "%s: query %s message %s", __FUNCTION__, challenge->challenges[http01_ix].url, msg);
 
   // FIXME only one authorization is picked up
-  char *reply = PerformWebQuery(challenge->challenges[http01_ix].url, msg, "application/jose+json", 0);
+  char *reply = PerformWebQuery(challenge->challenges[http01_ix].url, msg, acme_jose_json, 0);
 
   free(msg);
   if (reply) {
@@ -1437,7 +1415,9 @@ void Acme::DownloadCertificate() {
 
   char *msg = MakeMessageKID(order->certificate, "");
 
-  char *reply = PerformWebQuery(order->authorizations[0], msg, "application/jose+json", acme_accept_pem_chain);
+  ESP_LOGI(acme_tag, "%s: PerformWebQuery(%s,%s,%s,%s)", __FUNCTION__, order->certificate, msg, acme_jose_json, acme_accept_pem_chain);
+
+  char *reply = PerformWebQuery(order->certificate, msg, acme_jose_json, acme_accept_pem_chain);
 
   free(msg);
   if (reply) {
@@ -1446,19 +1426,21 @@ void Acme::DownloadCertificate() {
     ESP_LOGE(acme_tag, "%s: PerformWebQuery -> null", __FUNCTION__);
   }
 
-  FILE *f = fopen(config->getAcmeCertificateFile(), "w");
+  int fnl = strlen(config->getAcmeCertificateFile()) + strlen(config->getFilePrefix()) + 3;
+  char *fn = (char *)malloc(fnl);
+  sprintf(fn, "%s/%s", config->getFilePrefix(), config->getAcmeCertificateFile());
+  FILE *f = fopen(fn, "w");
   if (f) {
     size_t len = strlen(reply);
     size_t fl = fwrite(reply, 1, len, f);
     if (fl != len) {
-      ESP_LOGE(acme_tag, "Failed to write certificate to %s, %d of %d written", config->getAcmeCertificateFile(), fl, len);
+      ESP_LOGE(acme_tag, "Failed to write certificate to %s, %d of %d written", fn, fl, len);
     } else {
-      ESP_LOGI(acme_tag, "Wrote certificate to %s", config->getAcmeCertificateFile());
+      ESP_LOGI(acme_tag, "Wrote certificate to %s", fn);
     }
     fclose(f);
   } else {
-    ESP_LOGE(acme_tag, "Could not open %s to write certificate, error %d (%s)", config->getAcmeCertificateFile(),
-      errno, strerror(errno));
+    ESP_LOGE(acme_tag, "Could not open %s to write certificate, error %d (%s)", fn, errno, strerror(errno));
   }
   free(reply);
 }
@@ -1554,7 +1536,7 @@ void Acme::DownloadAuthorizationResource() {
   ESP_LOGD(acme_tag, "%s: query %s message %s", __FUNCTION__, order->authorizations[0], msg);
 
   // FIXME only one authorization is picked up
-  char *reply = PerformWebQuery(order->authorizations[0], msg, "application/jose+json", 0);
+  char *reply = PerformWebQuery(order->authorizations[0], msg, acme_jose_json, 0);
 
   free(msg);
   if (reply) {
@@ -1909,16 +1891,14 @@ char *Acme::PerformWebQuery(const char *query, const char *topost, const char *a
   return buf;
 }
 
+/*
+ * This function catches HTTP headers (two of which we trap), and data sent to us as replies.
+ * We gatter the latter in the reply_buffer field, whose alloc/free is rather sensitive.
+ */
 esp_err_t Acme::HttpEvent(esp_http_client_event_t *event) {
-  // We scan HTTP headers in replies for these :
-  const char *acme_nonce_header = "Replay-Nonce";
-  const char *acme_location_header = "Location";
-
   switch (event->event_id) {
-  default:
-    break;
   case HTTP_EVENT_ON_HEADER:
-    ESP_LOGD("Acme", "%s: header %s value %s", __FUNCTION__, event->header_key, event->header_value);
+    ESP_LOGI("Acme", "%s: header %s value %s", __FUNCTION__, event->header_key, event->header_value);
     if (strcmp(event->header_key, acme_nonce_header) == 0)
       acme->setNonce(event->header_value);
     else if (strcmp(event->header_key, acme_location_header) == 0)
@@ -1939,7 +1919,9 @@ esp_err_t Acme::HttpEvent(esp_http_client_event_t *event) {
       strncpy(acme->reply_buffer + oldlen, (const char *)event->data, event->data_len);
       acme->reply_buffer[acme->reply_buffer_len] = 0;
     }
-    // ESP_LOGI("Acme", "%s: received %s", __FUNCTION__, acme->reply_buffer);
+    // ESP_LOGD("Acme", "%s: received %s", __FUNCTION__, acme->reply_buffer);
+    break;
+  default:
     break;
   }
   return ESP_OK;
@@ -2040,15 +2022,6 @@ void Acme::ListFiles() {
     while (file) {
       ESP_LOGI(acme_tag, "File: %s size %d", file.name(), file.size());
       file = root.openNextFile();
-#if 0
-      if (file.isDirectory()) {
-        ESP_LOGI(acme_tag, "Dir: %s", file.name());
-        // recursive : listDir(fs, file.name(), levels -1);
-      } else {
-        ESP_LOGI(acme_tag, "File: %s size %d", file.name(), file.size());
-      }
-      file = root.openNextFile();
-#endif
     }
   }
 
@@ -2122,6 +2095,10 @@ void Acme::ChallengeStart() {
   }
 }
 
+void Acme::CertificateDownload() {
+  DownloadCertificate();
+}
+
 char *Acme::GenerateCSR() {
   const int buflen = 4096;	// This is used in mbedtls_x509 functions internally
   int ret;
@@ -2188,8 +2165,9 @@ void Acme::FinalizeOrder() {
   sprintf(csr_param, csr_format, csr);
   free(csr);
   char *msg = MakeMessageKID(order->finalize, csr_param);
-  ESP_LOGI(acme_tag, "%s : msg %s", __FUNCTION__, msg);
-  char *reply = PerformWebQuery(order->finalize, msg, "application/jose+json", 0);
+  ESP_LOGD(acme_tag, "%s : msg %s", __FUNCTION__, msg);
+
+  char *reply = PerformWebQuery(order->finalize, msg, acme_jose_json, 0);
   free(csr_param);
 
   free(msg);
@@ -2230,7 +2208,12 @@ void Acme::FinalizeOrder() {
 
 void Acme::ReadFinalizeReply(JsonObject &json) {
   ReadOrder(json);
-
+#if 0
   const char *cert = json["certificate"];
   order->certificate = cert ? strdup(cert) : 0;
+#endif
+}
+
+void Acme::setCertificate(const char *cert) {
+  order->certificate = strdup(cert);
 }

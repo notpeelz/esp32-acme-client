@@ -55,6 +55,8 @@ class Acme {
     void OrderStart();
     void ChallengeStart();
     void ListFiles();
+    void setCertificate(const char *cert);
+    void CertificateDownload();
 
     struct Certificate {
       char *fullchain;
@@ -82,6 +84,16 @@ class Acme {
       "{\n  \"termsOfServiceAgreed\": true,\n  \"contact\": [\n    \"%s\"\n  ],\n  \"onlyReturnExisting\": %s\n}";
     const char *new_account_template_no_email = "{\n  \"termsOfServiceAgreed\": true,\n  \"resource\": [\n    \"new-reg\"\n  ]\n}";
     const char *new_order_template = "{\n  \"identifiers\": [\n    {\n      \"type\": \"dns\", \"value\": \"%s\"\n    }\n  ]\n}";
+    const char *acme_jose_json = "application/jose+json";
+
+    // These are needed in static member functions
+    // We scan HTTP headers in replies for these :
+    constexpr static const char *acme_nonce_header = "Replay-Nonce";
+    constexpr static const char *acme_location_header = "Location";
+
+    // These are the static member functions
+    static esp_err_t NonceHttpEvent(esp_http_client_event_t *event);
+    static esp_err_t HttpEvent(esp_http_client_event_t *event);
 
     void	StoreFileOnWebserver(char *localfn, char *remotefn);
     char	*Base64(const char *);
@@ -95,12 +107,10 @@ class Acme {
     char	*MakeMessageKID(const char *url, const char *payload);
     char	*MakeProtectedKID(const char *query);
     char	*PerformWebQuery(const char *, const char *, const char *, const char *accept_msg);
-    static esp_err_t HttpEvent(esp_http_client_event_t *event);
 
     void	QueryAcmeDirectory();
     void	CleanupAcmeDirectory();
     boolean	RequestNewNonce();
-    static esp_err_t NonceHttpEvent(esp_http_client_event_t *event);
 
     mbedtls_pk_context	*GeneratePrivateKey();
     // boolean	GeneratePrivateKey();
