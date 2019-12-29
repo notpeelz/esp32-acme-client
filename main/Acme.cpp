@@ -90,15 +90,13 @@ Acme::Acme() {
   // Account key
   if ((accountkey = ReadPrivateKey(config->getMyAcmeUserKeyFile())) == 0) {		// Read key from file
     // Generate and save an initial key if we don't have any
-    accountkey = GeneratePrivateKey();
-    WritePrivateKey(accountkey, config->getMyAcmeUserKeyFile());
+    GenerateAccountKey();
   }
   rsa = mbedtls_pk_rsa(*accountkey);
 
   // Certificate key
   if ((certkey = ReadPrivateKey(config->getAcmeCertificateKeyFile())) == 0) {
-    certkey = GeneratePrivateKey();
-    WritePrivateKey(certkey, config->getAcmeCertificateKeyFile());
+    GenerateCertificateKey();
   }
 }
 
@@ -127,8 +125,44 @@ Acme::~Acme() {
   }
 }
 
+void Acme::GenerateAccountKey() {
+  accountkey = GeneratePrivateKey();
+  WritePrivateKey(accountkey, config->getMyAcmeUserKeyFile());
+}
+
+void Acme::GenerateCertificateKey() {
+  certkey = GeneratePrivateKey();
+  WritePrivateKey(certkey, config->getAcmeCertificateKeyFile());
+}
+
 /*
- * This app's basic interconnect functions
+ * Private keys
+ * Very simplistic setter/getters.
+ * Assumption is to pass a pointer, the original objects are managed elsewhere if supplied.
+ * There will be a leak if you allow the class to read from a file, as well as supplying a key.
+ * Setters also write the key into a file.
+ */
+mbedtls_pk_context *Acme::getAccountKey() {
+  return accountkey;
+}
+
+mbedtls_pk_context *Acme::getCertificateKey() {
+  return certkey;
+}
+
+void Acme::setAccountKey(mbedtls_pk_context *ak) {
+  accountkey = ak;
+  WritePrivateKey(accountkey, config->getMyAcmeUserKeyFile());
+}
+
+void Acme::setCertificateKey(mbedtls_pk_context *ck) {
+  certkey = ck;
+  WritePrivateKey(certkey, config->getAcmeCertificateKeyFile());
+}
+
+/*
+ * Network connect / disconnect handlers.
+ * These use the esp-idf API for such functions.
  */
 void Acme::NetworkConnected(void *ctx, system_event_t *event) {
   ESP_LOGI(acme_tag, "%s", __FUNCTION__);
@@ -231,8 +265,24 @@ void Acme::loop(time_t now) {
   }
 }
 
+/*
+ * This runs the engine to reacquire a certificate.
+ * RFC 8555 describes the states the server objects can be in; the client side must match that,
+ * but also keep track of a couple of other state aspects :
+ * - we may have "order = valid" but did we download the certificate yet ?
+ * - ..
+ *
+ * This function does not start the order process, see RenewCertificate(), but advances it once it's started.
+ * This function also doesn't create private keys, use the public API to do that or to supply them.
+ */
 void Acme::AcmeProcess() {
   ESP_LOGI(acme_tag, "%s", __FUNCTION__);
+
+  if (account == 0) {
+    // if (
+  }
+  if (order == 0 || strcmp(order->status, acme_status_valid) == 0)
+    return;
 }
 
 /*
@@ -477,7 +527,8 @@ String Acme::Signature(String pr, String pl) {
 
   ESP_LOGD(acme_tag, "%s: signature size %d", __FUNCTION__, signature_size);
 
-  // Base64-encode and return
+  /* Base64-encode and return.. it's important to use signature_size from mbedtls_pk_sign,
+   * the signature can contain 0 bytes. */
   char *s = Base64((char *)signature, signature_size);
   free(signature);
 
@@ -628,7 +679,7 @@ void Acme::setNonce(char *s) {
     free(nonce);
   nonce = strdup(s);
 
-  ESP_LOGI(acme_tag, "%s(%s)", __FUNCTION__, nonce);
+  ESP_LOGD(acme_tag, "%s(%s)", __FUNCTION__, nonce);
 }
 
 // This is needed because the location field is passed back in an HTTP header
@@ -770,10 +821,10 @@ void Acme::RequestNewAccount(const char *contact, boolean onlyExisting) {
   if (contact) {	// email address is included
     payload = (char *)malloc(strlen(new_account_template) + strlen(contact) + 10);
     sprintf(payload, new_account_template, contact, onlyExisting ? "true" : "false");
-    ESP_LOGI(acme_tag, "%s(%s) msg %s", __FUNCTION__, contact, payload);
+    ESP_LOGD(acme_tag, "%s(%s) msg %s", __FUNCTION__, contact, payload);
   } else {
     payload = strdup(new_account_template_no_email);
-    ESP_LOGI(acme_tag, "%s(NULL) msg %s", __FUNCTION__, payload);
+    ESP_LOGD(acme_tag, "%s(NULL) msg %s", __FUNCTION__, payload);
   }
 
   jwk = MakeJWK();
@@ -787,7 +838,7 @@ void Acme::RequestNewAccount(const char *contact, boolean onlyExisting) {
     ESP_LOGE(acme_tag, "%s: null message", __FUNCTION__);
     return;
   }
-  ESP_LOGI(acme_tag, "%s : msg %s", __FUNCTION__, msg);
+  ESP_LOGD(acme_tag, "%s : msg %s", __FUNCTION__, msg);
 
   char *reply = PerformWebQuery(directory->newAccount, msg, acme_jose_json, 0);
   free(msg);
@@ -820,7 +871,7 @@ void Acme::RequestNewAccount(const char *contact, boolean onlyExisting) {
   } else if (reply_status == 0) {
     ESP_LOGE(acme_tag, "%s: null reply_status", __FUNCTION__);
   } else {
-    ESP_LOGE(acme_tag, "%s: reply_status '%s'", __FUNCTION__, reply_status);
+    ESP_LOGI(acme_tag, "%s: reply_status '%s'", __FUNCTION__, reply_status);
   }
 
   ReadAccount(root);
@@ -1902,7 +1953,7 @@ char *Acme::PerformWebQuery(const char *query, const char *topost, const char *a
 esp_err_t Acme::HttpEvent(esp_http_client_event_t *event) {
   switch (event->event_id) {
   case HTTP_EVENT_ON_HEADER:
-    ESP_LOGI("Acme", "%s: header %s value %s", __FUNCTION__, event->header_key, event->header_value);
+    ESP_LOGD("Acme", "%s: header %s value %s", __FUNCTION__, event->header_key, event->header_value);
     if (strcmp(event->header_key, acme_nonce_header) == 0)
       acme->setNonce(event->header_value);
     else if (strcmp(event->header_key, acme_location_header) == 0)
@@ -2247,10 +2298,12 @@ void Acme::ReadFinalizeReply(JsonObject &json) {
   ReadOrder(json);
 }
 
+#if 0
 // Debug
 void Acme::setCertificate(const char *cert) {
   order->certificate = strdup(cert);
 }
+#endif
 
 /*
  * Convert timestamp from ACME (e.g. 2019-11-25T16:56:52Z) into time_t.
@@ -2326,4 +2379,8 @@ time_t Acme::TimeMbedToTimestamp(mbedtls_x509_time t) {
  * and replacing the old with the new only happens when the new certificate is successfully downloaded.
  */
 void Acme::RenewCertificate() {
+}
+
+mbedtls_x509_crt *Acme::getCertificate() {
+  return certificate;
 }

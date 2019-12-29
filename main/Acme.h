@@ -50,14 +50,24 @@ class Acme {
     void NetworkDisconnected(void *ctx, system_event_t *event);
 
     void loop(time_t now);
+
+    // Private keys
+    void GenerateAccountKey();
+    void GenerateCertificateKey();
+    mbedtls_pk_context *getAccountKey();
+    mbedtls_pk_context *getCertificateKey();
+    void setAccountKey(mbedtls_pk_context *ak);
+    void setCertificateKey(mbedtls_pk_context *ck);
+
     void AcmeProcess();				// Run the ACME client FSM (finite state machine)
+    mbedtls_x509_crt *getCertificate();
 
     void OrderRemove(char *);
     void OrderStart();
     void ChallengeStart();
     void ListFiles();
     void CertificateDownload();
-
+#if 0
     struct Certificate {
       mbedtls_x509_crt	*cert;
     };
@@ -65,7 +75,7 @@ class Acme {
     Certificate *issueCertificate(char *domain);
 
     void setCertificate(const char *cert);	// FIXME debug, remove this
-
+#endif
   private:
     const char *acme_tag = "Acme";		// For ESP_LOGx calls
 

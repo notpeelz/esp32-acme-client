@@ -325,7 +325,7 @@ static void HandleMqtt(char *topic, char *message) {
   else if (strcmp(message, "dir") == 0 || strcmp(message, "list") == 0) {
     acme->ListFiles();
   } else if (strcmp(message, "order") == 0) {
-    acme->setCertificate("https://acme-staging-v02.api.letsencrypt.org/acme/cert/fa738f7761ac7f2dcebe3124113c5c13a447");
+    // acme->setCertificate("https://acme-staging-v02.api.letsencrypt.org/acme/cert/fa738f7761ac7f2dcebe3124113c5c13a447");
   }
 }
 
