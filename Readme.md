@@ -16,6 +16,12 @@ to put temporary files there to validate theirselves against the ACME server.
 
 Any secured Linux box on which you provide access to its web server can easily be set up in this way.
 
+This is unfinished software. Current status and plans :
+- (done) works as a part of my app against the staging server
+- (todo) polish up the API so it can be a library
+- (todo) run against the production server
+- (todo) renew certificate (I have three months to get there)
+
 API :
 - several parameters can be set up via the separate Config class :
   const char *acmeEmailAddress();		your email address
