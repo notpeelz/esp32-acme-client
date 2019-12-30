@@ -36,7 +36,7 @@ public:
   Config(char *);
   ~Config();
 
-  const char *getFilePrefix();
+  const char *getFileNamePrefix();
 
   char *QueryConfig();		// Caller must free the string
 
@@ -57,9 +57,9 @@ public:
   const char *acmeEmailAddress();
   const char *acmeUrl();
   const char *acmeServerUrl();
-  const char *getMyAcmeUserKeyFile();
-  const char *getAcmeCertificateKeyFile();
-  const char *getAcmeCertificateFile();
+  const char *getAccountKeyFileName();
+  const char *getAcmeCertificateKeyFileName();
+  const char *getAcmeCertificateFileName();
 
   const char *getAcmeAccountFileName();
   const char *getAcmeOrderFileName();

@@ -27,9 +27,9 @@ API :
   const char *acmeEmailAddress();		your email address
   const char *acmeUrl();			the FQDN that we're managing a certificate for
   const char *acmeServerUrl();			e.g.  https://acme-staging-v02.api.letsencrypt.org/directory
-  const char *getMyAcmeUserKeyFile();		a file name on local (esp spiffs) storage, for an account private key
-  const char *getAcmeCertificateKeyFile();	a file name on local (esp spiffs) storage, for a certificate private key
-  const char *getAcmeCertificateFile();		a file name on local (esp spiffs) storage, for the certificate PEM file
+  const char *getAccountKeyFileName();		a file name on local (esp spiffs) storage, for an account private key
+  const char *getAcmeCertificateKeyFileName();	a file name on local (esp spiffs) storage, for a certificate private key
+  const char *getAcmeCertificateFileName();	a file name on local (esp spiffs) storage, for the certificate PEM file
 
   const char *getAcmeAccountFileName();		a file name to keep state of the account, on local storage (e.g. account.json)
   const char *getAcmeOrderFileName();		a file name to keep state of the order, on local storage (e.g. order.json)

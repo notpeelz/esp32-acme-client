@@ -342,15 +342,15 @@ char *Config::getMyKey() {
   return my_key;
 }
 
-const char *Config::getMyAcmeUserKeyFile() {
+const char *Config::getAccountKeyFileName() {
   return acme_user_private_key_file;
 }
 
-const char *Config::getAcmeCertificateKeyFile() {
+const char *Config::getAcmeCertificateKeyFileName() {
   return acme_cert_private_key_file;
 }
 
-const char *Config::getAcmeCertificateFile() {
+const char *Config::getAcmeCertificateFileName() {
   return acme_cert_fn;
 }
 
@@ -366,6 +366,6 @@ const char *Config::getAcmeAuthorizationFileName() {
   return "acme/auth.json";
 }
 
-const char *Config::getFilePrefix() {
+const char *Config::getFileNamePrefix() {
   return "/spiffs";
 }

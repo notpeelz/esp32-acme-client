@@ -165,8 +165,8 @@ class Acme {
     char	*PerformWebQuery(const char *, const char *, const char *, const char *accept_msg);
 
     void	QueryAcmeDirectory();
-    void	CleanupAcmeDirectory();
     boolean	RequestNewNonce();
+    void	ClearDirectory();
 
     mbedtls_pk_context	*GeneratePrivateKey();
     boolean	ReadPrivateKey();

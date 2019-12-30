@@ -77,8 +77,8 @@ Acme::Acme() {
   ESP_LOGI(acme_tag, "\tServer URL : %s", config->acmeServerUrl());
   ESP_LOGI(acme_tag, "\temail address : %s", config->acmeEmailAddress());
   ESP_LOGI(acme_tag, "\tMy URL : %s", config->acmeUrl());
-  ESP_LOGI(acme_tag, "\tAccount private key : %s", config->getMyAcmeUserKeyFile());
-  ESP_LOGI(acme_tag, "\tCertificate private key : %s", config->getAcmeCertificateKeyFile());
+  ESP_LOGI(acme_tag, "\tAccount private key : %s", config->getAccountKeyFileName());
+  ESP_LOGI(acme_tag, "\tCertificate private key : %s", config->getAcmeCertificateKeyFileName());
   ESP_LOGI(acme_tag, "\tAccount info file : %s", config->getAcmeAccountFileName());
   ESP_LOGI(acme_tag, "\tOrder info file : %s", config->getAcmeOrderFileName());
 
@@ -87,24 +87,21 @@ Acme::Acme() {
   WritePrivateKey("/spiffs/acme/newkey.pem");
 #endif
 
-  // Account key
-  if ((accountkey = ReadPrivateKey(config->getMyAcmeUserKeyFile())) == 0) {		// Read key from file
-    // Generate and save an initial key if we don't have any
-    GenerateAccountKey();
+  /*
+   * Don't generate private keys automatically.
+   * Do load the private keys early on (from files) if they're here.
+   */
+  if ((accountkey = ReadPrivateKey(config->getAccountKeyFileName()))) {
+    rsa = mbedtls_pk_rsa(*accountkey);
   }
-  rsa = mbedtls_pk_rsa(*accountkey);
-
-  // Certificate key
-  if ((certkey = ReadPrivateKey(config->getAcmeCertificateKeyFile())) == 0) {
-    GenerateCertificateKey();
-  }
+  certkey = ReadPrivateKey(config->getAcmeCertificateKeyFileName());
 }
 
 Acme::~Acme() {
   ClearAccount();
   ClearOrder();
   ClearChallenge();
-  CleanupAcmeDirectory();
+  ClearDirectory();
   if (nonce)
     free(nonce);
   if (reply_buffer)
@@ -127,12 +124,13 @@ Acme::~Acme() {
 
 void Acme::GenerateAccountKey() {
   accountkey = GeneratePrivateKey();
-  WritePrivateKey(accountkey, config->getMyAcmeUserKeyFile());
+  rsa = mbedtls_pk_rsa(*accountkey);
+  WritePrivateKey(accountkey, config->getAccountKeyFileName());
 }
 
 void Acme::GenerateCertificateKey() {
   certkey = GeneratePrivateKey();
-  WritePrivateKey(certkey, config->getAcmeCertificateKeyFile());
+  WritePrivateKey(certkey, config->getAcmeCertificateKeyFileName());
 }
 
 /*
@@ -152,12 +150,16 @@ mbedtls_pk_context *Acme::getCertificateKey() {
 
 void Acme::setAccountKey(mbedtls_pk_context *ak) {
   accountkey = ak;
-  WritePrivateKey(accountkey, config->getMyAcmeUserKeyFile());
+  if (accountkey) {
+    rsa = mbedtls_pk_rsa(*accountkey);
+    WritePrivateKey(accountkey, config->getAccountKeyFileName());
+  }
 }
 
 void Acme::setCertificateKey(mbedtls_pk_context *ck) {
   certkey = ck;
-  WritePrivateKey(certkey, config->getAcmeCertificateKeyFile());
+  if (certkey)
+    WritePrivateKey(certkey, config->getAcmeCertificateKeyFileName());
 }
 
 /*
@@ -176,58 +178,9 @@ void Acme::NetworkConnected(void *ctx, system_event_t *event) {
    */
   QueryAcmeDirectory();
   RequestNewNonce();
-  RequestNewAccount(config->acmeEmailAddress(), true);
+  RequestNewAccount(config->acmeEmailAddress(), true);	// This looks up the account, doesn't create one.
 
   ReadCertificate();
-
-#if 0
-  // First steps : query the API URLs, and get a nonce.
-  QueryAcmeDirectory();
-  RequestNewNonce();
-
-  // Read account info from local memory, or query the server
-  if (! ReadAccountInfo()) {
-    RequestNewAccount(config->acmeEmailAddress(), false);
-    // RequestNewAccount(0, false);
-
-    WriteAccountInfo();
-  }
-
-  // Read order info from local memory, or query the server
-  if (! ReadOrderInfo()) {
-    RequestNewOrder(config->acmeUrl());
-
-    WriteOrderInfo();
-  }
-
-  if (order)
-    ESP_LOGI(acme_tag, "%s : order status %s", __FUNCTION__, order->status);
-  else
-    ESP_LOGE(acme_tag, "%s : no current order", __FUNCTION__);
-
-  boolean valid = false;
-  // If we have an order that needs verifying, do so.
-  if (order && order->status) {
-    if (strcmp(order->status, "valid") == 0) {
-      valid = true;
-    } else if (strcmp(order->status, "pending") == 0) {
-      valid = ValidateOrder();
-      WriteOrderInfo();
-    }
-  }
-
-  if (order && order->status) {
-    if (strcmp(order->status, "ready") == 0) {
-      FinalizeOrder();
-      WriteOrderInfo();
-    }
-  }
-
-  if (order && order->certificate) {
-    DownloadCertificate();
-    WriteOrderInfo();
-  }
-#endif
 }
 
 void Acme::NetworkDisconnected(void *ctx, system_event_t *event) {
@@ -283,6 +236,55 @@ void Acme::AcmeProcess() {
   }
   if (order == 0 || strcmp(order->status, acme_status_valid) == 0)
     return;
+
+#if 0
+  // First steps : query the API URLs, and get a nonce.
+  QueryAcmeDirectory();
+  RequestNewNonce();
+
+  // Read account info from local memory, or query the server
+  if (! ReadAccountInfo()) {
+    RequestNewAccount(config->acmeEmailAddress(), false);
+    // RequestNewAccount(0, false);
+
+    WriteAccountInfo();
+  }
+
+  // Read order info from local memory, or query the server
+  if (! ReadOrderInfo()) {
+    RequestNewOrder(config->acmeUrl());
+
+    WriteOrderInfo();
+  }
+
+  if (order)
+    ESP_LOGI(acme_tag, "%s : order status %s", __FUNCTION__, order->status);
+  else
+    ESP_LOGE(acme_tag, "%s : no current order", __FUNCTION__);
+
+  boolean valid = false;
+  // If we have an order that needs verifying, do so.
+  if (order && order->status) {
+    if (strcmp(order->status, "valid") == 0) {
+      valid = true;
+    } else if (strcmp(order->status, "pending") == 0) {
+      valid = ValidateOrder();
+      WriteOrderInfo();
+    }
+  }
+
+  if (order && order->status) {
+    if (strcmp(order->status, "ready") == 0) {
+      FinalizeOrder();
+      WriteOrderInfo();
+    }
+  }
+
+  if (order && order->certificate) {
+    DownloadCertificate();
+    WriteOrderInfo();
+  }
+#endif
 }
 
 /*
@@ -547,6 +549,7 @@ String Acme::Signature(String pr, String pl) {
  */
 void Acme::QueryAcmeDirectory() {
   ESP_LOGI(acme_tag, "Querying directory at %s", config->acmeServerUrl());
+  ClearDirectory();
 
   char *reply = PerformWebQuery((char *)config->acmeServerUrl(), 0, 0, 0);
 
@@ -593,7 +596,7 @@ void Acme::QueryAcmeDirectory() {
 /*
  * Deallocate the structure with the server URLs, and its content.
  */
-void Acme::CleanupAcmeDirectory() {
+void Acme::ClearDirectory() {
   if (directory) {
     if (directory->newAccount) free(directory->newAccount);
     if (directory->newNonce) free(directory->newNonce);
@@ -719,9 +722,9 @@ mbedtls_pk_context *Acme::GeneratePrivateKey() {
 mbedtls_pk_context *Acme::ReadPrivateKey(const char *ifn) {
   mbedtls_pk_context *pk;
 
-  int fnlen = strlen(config->getFilePrefix()) + strlen(ifn) + 3;
+  int fnlen = strlen(config->getFileNamePrefix()) + strlen(ifn) + 3;
   char *fn = (char *)malloc(fnlen);
-  sprintf(fn, "%s/%s", config->getFilePrefix(), ifn);
+  sprintf(fn, "%s/%s", config->getFileNamePrefix(), ifn);
 
   int ret;
   char buf[80];
@@ -746,9 +749,9 @@ mbedtls_pk_context *Acme::ReadPrivateKey(const char *ifn) {
  * Prepends our path prefix prior to use.
  */
 void Acme::WritePrivateKey(mbedtls_pk_context *pk, const char *ifn) {
-  int fnlen = strlen(config->getFilePrefix()) + strlen(ifn) + 3;
+  int fnlen = strlen(config->getFileNamePrefix()) + strlen(ifn) + 3;
   char *fn = (char *)malloc(fnlen);
-  sprintf(fn, "%s/%s", config->getFilePrefix(), ifn);
+  sprintf(fn, "%s/%s", config->getFileNamePrefix(), ifn);
 
   FILE *f = fopen(fn, "w");
   if (f == 0) {
@@ -795,9 +798,9 @@ void Acme::WritePrivateKey() {
   ESP_LOGI(acme_tag, "%s: private key len %d", __FUNCTION__, len);
   ESP_LOGI(acme_tag, "Key : %s", keystring);
 
-  int fnlen = strlen(config->getMyAcmeUserKeyFile()) + strlen(config->getFilePrefix()) + 3;
+  int fnlen = strlen(config->getAccountKeyFileName()) + strlen(config->getFileNamePrefix()) + 3;
   char *fn = (char *)malloc(fnlen);
-  sprintf(fn, "%s/%s", config->getFilePrefix(), config->getMyAcmeUserKeyFile());
+  sprintf(fn, "%s/%s", config->getFileNamePrefix(), config->getAccountKeyFileName());
 
   FILE *f = fopen(fn, "w");
   if (f) {
@@ -1009,8 +1012,8 @@ void Acme::ClearChallenge() {
  * Read from file
  */
 boolean Acme::ReadAccountInfo() {
-  char *fn = (char *)malloc(strlen(config->getAcmeAccountFileName()) + 5 + strlen(config->getFilePrefix()));
-  sprintf(fn, "%s/%s", config->getFilePrefix(), config->getAcmeAccountFileName());
+  char *fn = (char *)malloc(strlen(config->getAcmeAccountFileName()) + 5 + strlen(config->getFileNamePrefix()));
+  sprintf(fn, "%s/%s", config->getFileNamePrefix(), config->getAcmeAccountFileName());
 
   FILE *f = fopen(fn, "r");
   if (f == NULL) {
@@ -1068,8 +1071,8 @@ void Acme::WriteAccountInfo() {
     return;
   }
 
-  char *fn = (char *)malloc(strlen(config->getAcmeAccountFileName()) + 5 + strlen(config->getFilePrefix()));
-  sprintf(fn, "%s/%s", config->getFilePrefix(), config->getAcmeAccountFileName());
+  char *fn = (char *)malloc(strlen(config->getAcmeAccountFileName()) + 5 + strlen(config->getFileNamePrefix()));
+  sprintf(fn, "%s/%s", config->getFileNamePrefix(), config->getAcmeAccountFileName());
   FILE *f = fopen(fn, "w");
   if (f == NULL) {
     ESP_LOGE(acme_tag, "Could not write account info into %s, %s", fn, strerror(errno));
@@ -1183,8 +1186,8 @@ void Acme::RequestNewOrder(const char *url) {
  * Read from file
  */
 boolean Acme::ReadOrderInfo() {
-  char *fn = (char *)malloc(strlen(config->getAcmeOrderFileName()) + 5 + strlen(config->getFilePrefix()));
-  sprintf(fn, "%s/%s", config->getFilePrefix(), config->getAcmeOrderFileName());
+  char *fn = (char *)malloc(strlen(config->getAcmeOrderFileName()) + 5 + strlen(config->getFileNamePrefix()));
+  sprintf(fn, "%s/%s", config->getFileNamePrefix(), config->getAcmeOrderFileName());
 
   FILE *f = fopen(fn, "r");
   if (f == NULL) {
@@ -1243,8 +1246,8 @@ void Acme::WriteOrderInfo() {
     return;
   }
 
-  char *fn = (char *)malloc(strlen(config->getAcmeOrderFileName()) + 5 + strlen(config->getFilePrefix()));
-  sprintf(fn, "%s/%s", config->getFilePrefix(), config->getAcmeOrderFileName());
+  char *fn = (char *)malloc(strlen(config->getAcmeOrderFileName()) + 5 + strlen(config->getFileNamePrefix()));
+  sprintf(fn, "%s/%s", config->getFileNamePrefix(), config->getAcmeOrderFileName());
   FILE *f = fopen(fn, "w");
   if (f == NULL) {
     ESP_LOGE(acme_tag, "Could write order info into %s, %s", fn, strerror(errno));
@@ -1384,8 +1387,8 @@ boolean Acme::ValidateOrderFTP() {
    * Notes : take a single file for two reasons : can't remove it (see below), and the file system
    * doesn't always support file names in the format returned by an ACME server.
    */
-  char *localfn = (char *)malloc(strlen(config->getFilePrefix()) + 15);
-  sprintf(localfn, "%s/token", config->getFilePrefix());
+  char *localfn = (char *)malloc(strlen(config->getFileNamePrefix()) + 15);
+  sprintf(localfn, "%s/token", config->getFileNamePrefix());
 
   if (! CreateValidationFile(localfn, token)) {
     ESP_LOGE(acme_tag, "%s: could not create local validation file %s", __FUNCTION__, localfn);
@@ -1496,9 +1499,9 @@ void Acme::DownloadCertificate() {
     ESP_LOGE(acme_tag, "%s: PerformWebQuery -> null", __FUNCTION__);
   }
 
-  int fnl = strlen(config->getFilePrefix()) + strlen(config->getAcmeCertificateFile()) + 3;
+  int fnl = strlen(config->getFileNamePrefix()) + strlen(config->getAcmeCertificateFileName()) + 3;
   char *fn = (char *)malloc(fnl);
-  sprintf(fn, "%s/%s", config->getFilePrefix(), config->getAcmeCertificateFile());
+  sprintf(fn, "%s/%s", config->getFileNamePrefix(), config->getAcmeCertificateFileName());
   FILE *f = fopen(fn, "w");
   if (f) {
     size_t len = strlen(reply);
@@ -2321,9 +2324,9 @@ time_t Acme::timestamp(const char *ts) {
  * Read the certificate on local storage
  */
 void Acme::ReadCertificate() {
-  int fnl = strlen(config->getFilePrefix()) + strlen(config->getAcmeCertificateFile()) + 3;
+  int fnl = strlen(config->getFileNamePrefix()) + strlen(config->getAcmeCertificateFileName()) + 3;
   char *fn = (char *)malloc(fnl);
-  sprintf(fn, "%s/%s", config->getFilePrefix(), config->getAcmeCertificateFile());
+  sprintf(fn, "%s/%s", config->getFileNamePrefix(), config->getAcmeCertificateFileName());
 
   certificate = (mbedtls_x509_crt *)calloc(1, sizeof(mbedtls_x509_crt));
   mbedtls_x509_crt_init(certificate);
