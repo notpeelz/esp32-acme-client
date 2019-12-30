@@ -60,6 +60,21 @@ Acme::Acme() {
   last_run = 0;
   certificate = 0;
 
+  acme_url = 0;
+  email_address = 0;
+  acme_server_url = 0;
+  account_fn = 0;
+  account_key_fn = 0;
+  order_fn = 0;
+  cert_key_fn = 0;
+  cert_fn = 0;
+
+  accountkey = 0;
+  certkey = 0;
+  rsa = 0;
+
+  filename_prefix = "";
+
   ctr_drbg = (mbedtls_ctr_drbg_context *)calloc(1, sizeof(mbedtls_ctr_drbg_context));
   mbedtls_ctr_drbg_init(ctr_drbg);
 
@@ -73,6 +88,7 @@ Acme::Acme() {
     ESP_LOGE(acme_tag, "mbedtls_ctr_drbg_seed failed %d %s", err, buf);
   }
 
+#if 0
   ESP_LOGI(acme_tag, "ACME Configuration summary : %s", config->runAcme() ? "active" : "disabled");
   ESP_LOGI(acme_tag, "\tServer URL : %s", config->acmeServerUrl());
   ESP_LOGI(acme_tag, "\temail address : %s", config->acmeEmailAddress());
@@ -81,6 +97,7 @@ Acme::Acme() {
   ESP_LOGI(acme_tag, "\tCertificate private key : %s", config->getAcmeCertificateKeyFileName());
   ESP_LOGI(acme_tag, "\tAccount info file : %s", config->getAcmeAccountFileName());
   ESP_LOGI(acme_tag, "\tOrder info file : %s", config->getAcmeOrderFileName());
+#endif
 
 #if 0
   GeneratePrivateKey();
@@ -91,10 +108,11 @@ Acme::Acme() {
    * Don't generate private keys automatically.
    * Do load the private keys early on (from files) if they're here.
    */
-  if ((accountkey = ReadPrivateKey(config->getAccountKeyFileName()))) {
+  if (account_key_fn && (accountkey = ReadPrivateKey(account_key_fn))) {
     rsa = mbedtls_pk_rsa(*accountkey);
   }
-  certkey = ReadPrivateKey(config->getAcmeCertificateKeyFileName());
+  if (cert_key_fn)
+    certkey = ReadPrivateKey(cert_key_fn);
 }
 
 Acme::~Acme() {
@@ -115,6 +133,17 @@ Acme::~Acme() {
   free(ctr_drbg);
   ctr_drbg = 0;
 
+#if 0
+  // Don't do this, they're just copies
+  if (acme_url) free(acme_url);
+  if (email_address) free(email_address);
+  if (acme_server_url) free(acme_server_url);
+  if (account_fn) free(account_fn);
+  if (account_key_fn) free(account_key_fn);
+  if (order_fn) free(order_fn);
+  if (cert_key_fn) free(cert_key_fn);
+#endif
+
   if (certificate) {
     mbedtls_x509_crt_free(certificate);
     free(certificate);
@@ -125,12 +154,14 @@ Acme::~Acme() {
 void Acme::GenerateAccountKey() {
   accountkey = GeneratePrivateKey();
   rsa = mbedtls_pk_rsa(*accountkey);
-  WritePrivateKey(accountkey, config->getAccountKeyFileName());
+  if (account_key_fn)
+    WritePrivateKey(accountkey, account_key_fn);
 }
 
 void Acme::GenerateCertificateKey() {
   certkey = GeneratePrivateKey();
-  WritePrivateKey(certkey, config->getAcmeCertificateKeyFileName());
+  if (cert_key_fn)
+    WritePrivateKey(certkey, cert_key_fn);
 }
 
 /*
@@ -152,14 +183,15 @@ void Acme::setAccountKey(mbedtls_pk_context *ak) {
   accountkey = ak;
   if (accountkey) {
     rsa = mbedtls_pk_rsa(*accountkey);
-    WritePrivateKey(accountkey, config->getAccountKeyFileName());
+    if (account_key_fn)
+      WritePrivateKey(accountkey, account_key_fn);
   }
 }
 
 void Acme::setCertificateKey(mbedtls_pk_context *ck) {
   certkey = ck;
-  if (certkey)
-    WritePrivateKey(certkey, config->getAcmeCertificateKeyFileName());
+  if (certkey && cert_key_fn)
+    WritePrivateKey(certkey, cert_key_fn);
 }
 
 /*
@@ -178,7 +210,7 @@ void Acme::NetworkConnected(void *ctx, system_event_t *event) {
    */
   QueryAcmeDirectory();
   RequestNewNonce();
-  RequestNewAccount(config->acmeEmailAddress(), true);	// This looks up the account, doesn't create one.
+  RequestNewAccount(email_address, true);	// This looks up the account, doesn't create one.
 
   ReadCertificate();
 }
@@ -244,7 +276,7 @@ void Acme::AcmeProcess() {
 
   // Read account info from local memory, or query the server
   if (! ReadAccountInfo()) {
-    RequestNewAccount(config->acmeEmailAddress(), false);
+    RequestNewAccount(email_address, false);
     // RequestNewAccount(0, false);
 
     WriteAccountInfo();
@@ -252,7 +284,7 @@ void Acme::AcmeProcess() {
 
   // Read order info from local memory, or query the server
   if (! ReadOrderInfo()) {
-    RequestNewOrder(config->acmeUrl());
+    RequestNewOrder(acme_url);
 
     WriteOrderInfo();
   }
@@ -548,10 +580,10 @@ String Acme::Signature(String pr, String pl) {
  * This gives us a set of URLs for our queries. Put this in a structure for later use.
  */
 void Acme::QueryAcmeDirectory() {
-  ESP_LOGI(acme_tag, "Querying directory at %s", config->acmeServerUrl());
+  ESP_LOGI(acme_tag, "Querying directory at %s", acme_server_url);
   ClearDirectory();
 
-  char *reply = PerformWebQuery((char *)config->acmeServerUrl(), 0, 0, 0);
+  char *reply = PerformWebQuery(acme_server_url, 0, 0, 0);
 
   if (reply == 0) {
     ESP_LOGE(acme_tag, "%s: PerformWebQuery -> 0, returning", __FUNCTION__);
@@ -722,9 +754,9 @@ mbedtls_pk_context *Acme::GeneratePrivateKey() {
 mbedtls_pk_context *Acme::ReadPrivateKey(const char *ifn) {
   mbedtls_pk_context *pk;
 
-  int fnlen = strlen(config->getFileNamePrefix()) + strlen(ifn) + 3;
+  int fnlen = strlen(filename_prefix) + strlen(ifn) + 3;
   char *fn = (char *)malloc(fnlen);
-  sprintf(fn, "%s/%s", config->getFileNamePrefix(), ifn);
+  sprintf(fn, "%s/%s", filename_prefix, ifn);
 
   int ret;
   char buf[80];
@@ -749,9 +781,9 @@ mbedtls_pk_context *Acme::ReadPrivateKey(const char *ifn) {
  * Prepends our path prefix prior to use.
  */
 void Acme::WritePrivateKey(mbedtls_pk_context *pk, const char *ifn) {
-  int fnlen = strlen(config->getFileNamePrefix()) + strlen(ifn) + 3;
+  int fnlen = strlen(filename_prefix) + strlen(ifn) + 3;
   char *fn = (char *)malloc(fnlen);
-  sprintf(fn, "%s/%s", config->getFileNamePrefix(), ifn);
+  sprintf(fn, "%s/%s", filename_prefix, ifn);
 
   FILE *f = fopen(fn, "w");
   if (f == 0) {
@@ -798,9 +830,9 @@ void Acme::WritePrivateKey() {
   ESP_LOGI(acme_tag, "%s: private key len %d", __FUNCTION__, len);
   ESP_LOGI(acme_tag, "Key : %s", keystring);
 
-  int fnlen = strlen(config->getAccountKeyFileName()) + strlen(config->getFileNamePrefix()) + 3;
+  int fnlen = strlen(account_key_fn) + strlen(filename_prefix) + 3;
   char *fn = (char *)malloc(fnlen);
-  sprintf(fn, "%s/%s", config->getFileNamePrefix(), config->getAccountKeyFileName());
+  sprintf(fn, "%s/%s", filename_prefix, account_key_fn);
 
   FILE *f = fopen(fn, "w");
   if (f) {
@@ -818,8 +850,12 @@ void Acme::WritePrivateKey() {
 void Acme::RequestNewAccount(const char *contact, boolean onlyExisting) {
   char *msg, *jwk, *payload;
 
-  if (directory == 0 || rsa == 0)
+  if (directory == 0)
     return;
+
+  if (rsa == 0) {
+    ReadAccountKey();
+  }
 
   if (contact) {	// email address is included
     payload = (char *)malloc(strlen(new_account_template) + strlen(contact) + 10);
@@ -1012,8 +1048,8 @@ void Acme::ClearChallenge() {
  * Read from file
  */
 boolean Acme::ReadAccountInfo() {
-  char *fn = (char *)malloc(strlen(config->getAcmeAccountFileName()) + 5 + strlen(config->getFileNamePrefix()));
-  sprintf(fn, "%s/%s", config->getFileNamePrefix(), config->getAcmeAccountFileName());
+  char *fn = (char *)malloc(strlen(account_fn) + 5 + strlen(filename_prefix));
+  sprintf(fn, "%s/%s", filename_prefix, account_fn);
 
   FILE *f = fopen(fn, "r");
   if (f == NULL) {
@@ -1071,8 +1107,8 @@ void Acme::WriteAccountInfo() {
     return;
   }
 
-  char *fn = (char *)malloc(strlen(config->getAcmeAccountFileName()) + 5 + strlen(config->getFileNamePrefix()));
-  sprintf(fn, "%s/%s", config->getFileNamePrefix(), config->getAcmeAccountFileName());
+  char *fn = (char *)malloc(strlen(account_fn) + 5 + strlen(filename_prefix));
+  sprintf(fn, "%s/%s", filename_prefix, account_fn);
   FILE *f = fopen(fn, "w");
   if (f == NULL) {
     ESP_LOGE(acme_tag, "Could not write account info into %s, %s", fn, strerror(errno));
@@ -1186,8 +1222,8 @@ void Acme::RequestNewOrder(const char *url) {
  * Read from file
  */
 boolean Acme::ReadOrderInfo() {
-  char *fn = (char *)malloc(strlen(config->getAcmeOrderFileName()) + 5 + strlen(config->getFileNamePrefix()));
-  sprintf(fn, "%s/%s", config->getFileNamePrefix(), config->getAcmeOrderFileName());
+  char *fn = (char *)malloc(strlen(order_fn) + 5 + strlen(filename_prefix));
+  sprintf(fn, "%s/%s", filename_prefix, order_fn);
 
   FILE *f = fopen(fn, "r");
   if (f == NULL) {
@@ -1246,8 +1282,8 @@ void Acme::WriteOrderInfo() {
     return;
   }
 
-  char *fn = (char *)malloc(strlen(config->getAcmeOrderFileName()) + 5 + strlen(config->getFileNamePrefix()));
-  sprintf(fn, "%s/%s", config->getFileNamePrefix(), config->getAcmeOrderFileName());
+  char *fn = (char *)malloc(strlen(order_fn) + 5 + strlen(filename_prefix));
+  sprintf(fn, "%s/%s", filename_prefix, order_fn);
   FILE *f = fopen(fn, "w");
   if (f == NULL) {
     ESP_LOGE(acme_tag, "Could write order info into %s, %s", fn, strerror(errno));
@@ -1387,8 +1423,8 @@ boolean Acme::ValidateOrderFTP() {
    * Notes : take a single file for two reasons : can't remove it (see below), and the file system
    * doesn't always support file names in the format returned by an ACME server.
    */
-  char *localfn = (char *)malloc(strlen(config->getFileNamePrefix()) + 15);
-  sprintf(localfn, "%s/token", config->getFileNamePrefix());
+  char *localfn = (char *)malloc(strlen(filename_prefix) + 15);
+  sprintf(localfn, "%s/token", filename_prefix);
 
   if (! CreateValidationFile(localfn, token)) {
     ESP_LOGE(acme_tag, "%s: could not create local validation file %s", __FUNCTION__, localfn);
@@ -1499,9 +1535,9 @@ void Acme::DownloadCertificate() {
     ESP_LOGE(acme_tag, "%s: PerformWebQuery -> null", __FUNCTION__);
   }
 
-  int fnl = strlen(config->getFileNamePrefix()) + strlen(config->getAcmeCertificateFileName()) + 3;
+  int fnl = strlen(filename_prefix) + strlen(cert_fn) + 3;
   char *fn = (char *)malloc(fnl);
-  sprintf(fn, "%s/%s", config->getFileNamePrefix(), config->getAcmeCertificateFileName());
+  sprintf(fn, "%s/%s", filename_prefix, cert_fn);
   FILE *f = fopen(fn, "w");
   if (f) {
     size_t len = strlen(reply);
@@ -2112,7 +2148,7 @@ void Acme::OrderStart() {
 
   // Read account info from local memory, or query the server
   if (! ReadAccountInfo()) {
-    RequestNewAccount(config->acmeEmailAddress(), false);
+    RequestNewAccount(email_address, false);
     // RequestNewAccount(0);
 
     WriteAccountInfo();
@@ -2120,7 +2156,7 @@ void Acme::OrderStart() {
 
   // Read order info from local memory, or query the server
   if (! ReadOrderInfo()) {
-    RequestNewOrder(config->acmeUrl());
+    RequestNewOrder(acme_url);
 
     WriteOrderInfo();
   }
@@ -2196,9 +2232,9 @@ char *Acme::GenerateCSR() {
   mbedtls_x509write_csr_set_key(&req, certkey);
 
   // Specify our URL, as the "common name" field.
-  int snlen = strlen(config->acmeUrl()) + 4;
+  int snlen = strlen(acme_url) + 4;
   char *sn = (char *)malloc(snlen);
-  sprintf(sn, "CN=%s", config->acmeUrl());
+  sprintf(sn, "CN=%s", acme_url);
   ret = mbedtls_x509write_csr_set_subject_name(&req, sn);
   if (ret != 0) {
     char buf[80];
@@ -2249,6 +2285,14 @@ void Acme::FinalizeOrder() {
     return;
   }
   ESP_LOGI(acme_tag, "%s(%s)", __FUNCTION__, order->finalize);
+
+  if (certkey == 0) {
+    ReadCertKey();
+    if (certkey == 0) {
+      ESP_LOGE(acme_tag, "%s: can't proceed without certificate private key", __FUNCTION__);
+      return;
+    }
+  }
 
   char *csr = GenerateCSR();
   int csrlen = strlen(csr) + strlen(csr_format) + 5;
@@ -2324,9 +2368,9 @@ time_t Acme::timestamp(const char *ts) {
  * Read the certificate on local storage
  */
 void Acme::ReadCertificate() {
-  int fnl = strlen(config->getFileNamePrefix()) + strlen(config->getAcmeCertificateFileName()) + 3;
+  int fnl = strlen(filename_prefix) + strlen(cert_fn) + 3;
   char *fn = (char *)malloc(fnl);
-  sprintf(fn, "%s/%s", config->getFileNamePrefix(), config->getAcmeCertificateFileName());
+  sprintf(fn, "%s/%s", filename_prefix, cert_fn);
 
   certificate = (mbedtls_x509_crt *)calloc(1, sizeof(mbedtls_x509_crt));
   mbedtls_x509_crt_init(certificate);
@@ -2386,4 +2430,54 @@ void Acme::RenewCertificate() {
 
 mbedtls_x509_crt *Acme::getCertificate() {
   return certificate;
+}
+
+void Acme::setUrl(const char *fn) {
+  acme_url = fn;
+}
+
+void Acme::setEmail(const char *fn) {
+  email_address = fn;
+}
+
+void Acme::setAcmeServer(const char *fn) {
+  acme_server_url = fn;
+}
+
+void Acme::setAccountFilename(const char *fn) {
+  account_fn = fn;
+}
+
+void Acme::setAccountKeyFilename(const char *fn) {
+  account_key_fn = fn;
+  ReadAccountKey();
+}
+
+void Acme::setOrderFilename(const char *fn) {
+  order_fn = fn;
+}
+
+void Acme::setCertKeyFilename(const char *fn) {
+  cert_key_fn = fn;
+  ReadCertKey();
+}
+
+void Acme::setCertificateFilename(const char *fn) {
+  cert_fn = fn;
+  ReadCertificate();
+}
+
+void Acme::setFilenamePrefix(const char *fn) {
+  filename_prefix = fn;
+}
+
+void Acme::ReadAccountKey() {
+  if (account_key_fn && (accountkey = ReadPrivateKey(account_key_fn))) {
+    rsa = mbedtls_pk_rsa(*accountkey);
+  }
+}
+
+void Acme::ReadCertKey() {
+  if (cert_key_fn)
+    certkey = ReadPrivateKey(cert_key_fn);
 }

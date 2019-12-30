@@ -1,5 +1,6 @@
+#if 0
 /*
- * Secure keypad : one that doesn't need unlock codes
+ * Sample client for the ACME library
  *
  * Copyright (c) 2017, 2018, 2019 Danny Backx
  *
@@ -197,3 +198,4 @@ extern "C" {
       loop();
   }
 }
+#endif

@@ -49,6 +49,17 @@ class Acme {
     void NetworkConnected(void *ctx, system_event_t *event);
     void NetworkDisconnected(void *ctx, system_event_t *event);
 
+    // Getters / setters
+    void setUrl(const char *);
+    void setEmail(const char *);
+    void setAcmeServer(const char *);
+    void setAccountFilename(const char *);
+    void setAccountKeyFilename(const char *);
+    void setOrderFilename(const char *);
+    void setCertKeyFilename(const char *);
+    void setFilenamePrefix(const char *);
+    void setCertificateFilename(const char *);
+
     void loop(time_t now);
 
     // Private keys
@@ -78,6 +89,16 @@ class Acme {
 #endif
   private:
     const char *acme_tag = "Acme";		// For ESP_LOGx calls
+
+    const char *account_key_fn;			// Account private key filename
+    const char *cert_key_fn;			// Certificate private key filename
+    const char *email_address;			// Email address in the account
+    const char *acme_url;			// URL for which we're getting a certificate
+    const char *acme_server_url;		// ACME server
+    const char *filename_prefix;		// e.g. /spiffs
+    const char *account_fn;			// Account status json filename, e.g. "account.json"
+    const char *order_fn;			// Order status json filename, e.g. "order.json"
+    const char *cert_fn;			// Certificate filename, e.g. "certificate.pem"
 
     // String constants for use in the code
     const char *acme_agent_header = "User-Agent";
@@ -174,6 +195,8 @@ class Acme {
     void	WritePrivateKey();
     void	WritePrivateKey(const char *);
     void	WritePrivateKey(mbedtls_pk_context *pk, const char *fn);
+    void	ReadAccountKey();
+    void	ReadCertKey();
 
     void	RequestNewAccount(const char *contact, boolean onlyExisting);
     boolean	ReadAccountInfo();
