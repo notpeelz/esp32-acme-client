@@ -1,3 +1,4 @@
+#define FTP_WIDE_OPEN
 /*
 * ftpserv.c
 *
@@ -1154,7 +1155,9 @@ int ftpPASS(PFTPCONTEXT context, const char *params)
   /*
    * we have username saved in context->GPBuffer from USER command
    */
-  // if (config->ftpUser() && (strcmp(context->GPBuffer, config->ftpUser()) == 0))
+#ifndef FTP_WIDE_OPEN
+  if (config->ftpUser() && (strcmp(context->GPBuffer, config->ftpUser()) == 0))
+#endif
   {
     memset(context->RootDir, 0, sizeof(context->RootDir));
     memset(temptext, 0, sizeof(temptext));
@@ -1188,8 +1191,10 @@ int ftpPASS(PFTPCONTEXT context, const char *params)
 
     writelogentry(context, " PASS->successful logon", "");
   }
+#ifndef FTP_WIDE_OPEN
   else
     return sendstring(context, error530_r);
+#endif
 
   return sendstring(context, success230);
 }
