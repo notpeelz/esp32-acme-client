@@ -106,6 +106,7 @@ Acme::Acme() {
   WritePrivateKey("/spiffs/acme/newkey.pem");
 #endif
 
+#if 0
   /*
    * Don't generate private keys automatically.
    * Do load the private keys early on (from files) if they're here.
@@ -115,6 +116,7 @@ Acme::Acme() {
   }
   if (cert_key_fn)
     certkey = ReadPrivateKey(cert_key_fn);
+#endif
 }
 
 Acme::~Acme() {
@@ -368,56 +370,6 @@ void Acme::AcmeProcess() {
     WriteOrderInfo();
     return;
   }
-
-  
-#if 0
-  // First steps : query the API URLs, and get a nonce.
-  QueryAcmeDirectory();
-  RequestNewNonce();
-
-  // Read account info from local memory, or query the server
-  if (! ReadAccountInfo()) {
-    RequestNewAccount(email_address, false);
-    // RequestNewAccount(0, false);
-
-    WriteAccountInfo();
-  }
-
-  // Read order info from local memory, or query the server
-  if (! ReadOrderInfo()) {
-    RequestNewOrder(acme_url);
-
-    WriteOrderInfo();
-  }
-
-  if (order)
-    ESP_LOGI(acme_tag, "%s : order status %s", __FUNCTION__, order->status);
-  else
-    ESP_LOGE(acme_tag, "%s : no current order", __FUNCTION__);
-
-  boolean valid = false;
-  // If we have an order that needs verifying, do so.
-  if (order && order->status) {
-    if (strcmp(order->status, "valid") == 0) {
-      valid = true;
-    } else if (strcmp(order->status, "pending") == 0) {
-      valid = ValidateOrder();
-      WriteOrderInfo();
-    }
-  }
-
-  if (order && order->status) {
-    if (strcmp(order->status, "ready") == 0) {
-      FinalizeOrder();
-      WriteOrderInfo();
-    }
-  }
-
-  if (order && order->certificate) {
-    DownloadCertificate();
-    WriteOrderInfo();
-  }
-#endif
 }
 
 boolean Acme::CreateNewAccount() {
@@ -2326,73 +2278,6 @@ void Acme::ListFiles() {
   }
 
   SPIFFS.end();
-}
-
-void Acme::OrderStart() {
-  RequestNewNonce();
-
-  // Read account info from local memory, or query the server
-  if (! ReadAccountInfo()) {
-    RequestNewAccount(email_address, false);
-    // RequestNewAccount(0);
-
-    WriteAccountInfo();
-  }
-
-  // Read order info from local memory, or query the server
-  if (! ReadOrderInfo()) {
-    RequestNewOrder(acme_url);
-
-    WriteOrderInfo();
-  }
-
-  ESP_LOGI(acme_tag, "%s : order status %s", __FUNCTION__, order->status);
-
-  boolean valid = false;
-  // If we have an order that needs verifying, do so.
-  if (order && order->status) {
-    if (strcmp(order->status, "valid") == 0) {
-      valid = true;
-    } else if (strcmp(order->status, "pending") == 0) {
-      ESP_LOGI(acme_tag, "%s : Order pending -> calling ValidateOrder() (line %d)", __FUNCTION__, __LINE__);
-      valid = ValidateOrder();
-    }
-  }
-
-  if (order && order->status) {
-    if (strcmp(order->status, "ready") == 0) {
-      FinalizeOrder();
-    }
-  }
-
-  if (order && order->certificate) {
-    DownloadCertificate();
-  }
-}
-
-void Acme::ChallengeStart() {
-  RequestNewNonce();
-
-  boolean valid = false;
-  // If we have an order that needs verifying, do so.
-  if (order && order->status) {
-    if (strcmp(order->status, "valid") == 0) {
-      valid = true;
-    } else if (strcmp(order->status, "pending") == 0) {
-      ESP_LOGI(acme_tag, "%s : Order pending -> calling ValidateOrder() (line %d)", __FUNCTION__, __LINE__);
-      valid = ValidateOrder();
-    }
-  }
-
-  if (order && order->status) {
-    if (strcmp(order->status, "ready") == 0) {
-      FinalizeOrder();
-    }
-  }
-
-  if (order && order->certificate) {
-    DownloadCertificate();
-  }
 }
 
 void Acme::CertificateDownload() {
