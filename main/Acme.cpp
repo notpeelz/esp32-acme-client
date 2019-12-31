@@ -57,7 +57,9 @@ Acme::Acme() {
   account = 0;
   order = 0;
   challenge = 0;
-  location = nonce = 0;
+  // location = 0;
+  account_location = 0;
+  nonce = 0;
   reply_buffer = 0;
   reply_buffer_len = 0;
   http01_ix = -1;
@@ -280,11 +282,11 @@ void Acme::loop(time_t now) {
 static int process_count = 5;
 
 void Acme::AcmeProcess() {
-  ESP_LOGI(acme_tag, "%s", __FUNCTION__);
-
   if (process_count-- < 0) {
     return;
   }
+
+  ESP_LOGI(acme_tag, "%s", __FUNCTION__);
 
   if (account == 0) {
     ESP_LOGI(acme_tag, "%s account 0", __FUNCTION__);
@@ -353,6 +355,14 @@ void Acme::AcmeProcess() {
   if (strcmp(order->status, acme_status_processing) == 0) {
     ;
   }
+  if (strcmp(order->status, acme_status_downloaded) == 0) {
+    // There shouldn't be anything here, but if the downloaded file goes bust, download it again.
+    if (certificate == 0) {
+      free(order->status);
+      order->status = strdup(acme_status_valid);
+      WriteOrderInfo();
+    }
+  }
   if (strcmp(order->status, acme_status_valid) == 0) {
     if (order->certificate) {
       DownloadCertificate();
@@ -362,9 +372,6 @@ void Acme::AcmeProcess() {
     free(order->status);
     order->status = strdup(acme_status_downloaded);		// an additional status
     WriteOrderInfo();
-  }
-  if (strcmp(order->status, acme_status_downloaded) == 0) {
-    ;
   }
   if (strcmp(order->status, acme_status_invalid) == 0) {
     // Something went wrong with this order, need to restart a new order
@@ -818,9 +825,9 @@ void Acme::setNonce(char *s) {
 
 // This is needed because the location field is passed back in an HTTP header
 void Acme::setLocation(const char *s) {
-  if (location)
-    free(location);
-  location = strdup(s);
+  if (account_location)
+    free(account_location);
+  account_location = strdup(s);
 }
 
 /*
@@ -1078,9 +1085,6 @@ void Acme::ReadAccount(JsonObject &json) {
   BZZ(createdAt);
   BZZ(status);
 
-#undef BZZ
-#undef BZZ2
-
   JsonArray &jca = json["contact"];
   ESP_LOGD(acme_tag, "%s : %d contacts", __FUNCTION__, jca.size());
   account->contact = (char **)calloc(jca.size()+1, sizeof(char *));
@@ -1094,8 +1098,19 @@ void Acme::ReadAccount(JsonObject &json) {
   // When reading from our saved file, this is in the JSON.
   // So only update the field if we read the JSON parameter, otherwise don't do a thing.
   const char *l = json["location"];
-  if (l)
-    location = strdup(l);
+  // if (l)
+    // location = strdup(l);
+
+  if (account->location)
+    free(account->location);
+  if (account_location) {
+    account->location = account_location;
+    account_location = 0;
+  } else if (l)
+    account->location = strdup(l);
+
+#undef BZZ
+#undef BZZ2
 }
 
 void Acme::ClearAccount() {
@@ -1105,12 +1120,13 @@ void Acme::ClearAccount() {
     if (account->key_e) free(account->key_e);
     if (account->initialIp) free(account->initialIp);
     if (account->createdAt) free(account->createdAt);
+    if (account->location) free(account->location);
     free(account);
     account = 0;
   }
 
-  if (location) free(location);
-  location = 0;
+  // if (location) free(location);
+  // location = 0;
 }
 
 void Acme::ClearOrderContent() {
@@ -1209,7 +1225,7 @@ boolean Acme::ReadAccountInfo() {
     ESP_LOGD(acme_tag, "Reading -> %d bytes, total %d ", inc, total);
   }
   fclose(f);
-  ESP_LOGD(acme_tag, "JSON account %s", buffer);
+  ESP_LOGI(acme_tag, "%s: %s", __FUNCTION__, buffer);
 
   DynamicJsonBuffer jb;
   JsonObject &root = jb.parseObject(buffer);
@@ -1246,7 +1262,7 @@ void Acme::WriteAccountInfo() {
   DynamicJsonBuffer jb;
   JsonObject &jo = jb.createObject();
   jo[acme_json_status] = account->status;
-  jo[acme_json_location] = location;
+  jo[acme_json_location] = account->location;
 
   // contact array must be NULL terminated
   JsonArray &jca = jo.createNestedArray(acme_json_contact);
@@ -1384,7 +1400,7 @@ boolean Acme::ReadOrderInfo() {
   }
   fclose(f);
   buffer[total] = 0;
-  ESP_LOGD(acme_tag, "JSON account %s", buffer);
+  ESP_LOGI(acme_tag, "%s: %s", __FUNCTION__, buffer);
 
   DynamicJsonBuffer jb;
   JsonObject &root = jb.parseObject(buffer);
@@ -1998,12 +2014,12 @@ void Acme::SetAcmeUserAgentHeader(esp_http_client_handle_t client) {
  * {"alg": "RS256", "nonce": "webISTv8", "kid": "https://acme-staging-v02.api.letsencrypt.org/acme/acct/012", "url": "https://acme-staging-v02.api.letsencrypt.org/acme/new-order"}
  */
 char *Acme::MakeProtectedKID(const char *query) {
-  if (location == 0 || nonce == 0)
+  if (account->location == 0 || nonce == 0)
     return 0;
 
   const char *acme_protected_template = "{\"alg\": \"RS256\", \"nonce\": \"%s\", \"url\": \"%s\", \"kid\": \"%s\"}";
-  char *request = (char *)malloc(strlen(acme_protected_template) + strlen(query) + strlen(nonce) + strlen(location) + 4);
-  sprintf(request, acme_protected_template, nonce, query, location);
+  char *request = (char *)malloc(strlen(acme_protected_template) + strlen(query) + strlen(nonce) + strlen(account->location) + 4);
+  sprintf(request, acme_protected_template, nonce, query, account->location);
 
   return request;
 }

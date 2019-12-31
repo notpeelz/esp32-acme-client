@@ -242,7 +242,8 @@ class Acme {
     Challenge	*challenge;
 
     char	*nonce;
-    char	*location;
+    // char	*location;	// moved to Account
+    char	*account_location;
     char	*reply_buffer;
     int		reply_buffer_len;
 
@@ -277,6 +278,7 @@ class Acme {
       char	*initialIp,
 		*createdAt;
       time_t	t_createdAt;
+      char	*location;		// Used to be a class field
     };
 
     struct Identifier {			// See ACME RFC § 7.1.3
