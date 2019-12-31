@@ -74,6 +74,7 @@ class Acme {
     void AcmeProcess();				// Run the ACME client FSM (finite state machine)
     mbedtls_x509_crt *getCertificate();
 
+    void CreateNewOrder();
     void OrderRemove(char *);
     void OrderStart();
     void ChallengeStart();

@@ -239,7 +239,7 @@ void Acme::NetworkDisconnected(void *ctx, system_event_t *event) {
  *    The last_run member ensures we either do this at reboot, or only once per hour.
  */
 void Acme::loop(time_t now) {
-  if (order && (strcmp(order->status, acme_status_valid) != 0 && strcmp(order->status, acme_status_ready) != 0)) {
+  if (order) {
     AcmeProcess();
     return;		// FIXME ? Only look into renewal if we're not processing here.
   }
@@ -271,15 +271,91 @@ void Acme::loop(time_t now) {
  * This function does not start the order process, see RenewCertificate(), but advances it once it's started.
  * This function also doesn't create private keys, use the public API to do that or to supply them.
  */
+static int process_count = 5;
 void Acme::AcmeProcess() {
+
+  if (process_count-- < 0) {
+    delay(5000);
+    return;
+  }
+
   ESP_LOGI(acme_tag, "%s", __FUNCTION__);
+  delay(5000);
 
   if (account == 0) {
-    // if (
+    ESP_LOGI(acme_tag, "%s account 0", __FUNCTION__);
+    if (! ReadAccountInfo()) {
+      ESP_LOGI(acme_tag, "%s requesting new account", __FUNCTION__);
+      RequestNewAccount(email_address, true);
+      ESP_LOGI(acme_tag, "%s writing new account", __FUNCTION__);
+      WriteAccountInfo();
+    }
+    if (account == 0) {
+      ESP_LOGE(acme_tag, "%s: fail, no account", __FUNCTION__);
+      return;
+    }
   }
-  if (order == 0 || strcmp(order->status, acme_status_valid) == 0)
-    return;
 
+  if (order == 0) {	// We haven't read storage yet, and we've not been kickstarted by the application.
+    ESP_LOGI(acme_tag, "%s Read order info", __FUNCTION__);
+    ReadOrderInfo();
+  }
+  if (order == 0)
+    return;		// Return silently
+
+  if (order->status == 0) {
+    ESP_LOGI(acme_tag, "%s order status 0", __FUNCTION__);
+    ReadOrderInfo();
+    if (order == 0 || order->status == 0) {
+      ESP_LOGI(acme_tag, "%s request new order", __FUNCTION__);
+      RequestNewOrder(acme_url);
+      WriteOrderInfo();
+      return;
+    }
+  }
+  if (order->status == 0) {
+    ESP_LOGI(acme_tag, "%s order status 0+", __FUNCTION__);
+    return;
+  }
+
+  // Check deeper
+  boolean invalid = false;
+  if (challenge && strcmp(challenge->status, acme_status_invalid) == 0) {
+    ESP_LOGE(acme_tag, "%s : %s challenge, starting a new order", __FUNCTION__, acme_status_invalid);
+    invalid = true;
+  } else if (challenge && challenge->challenges)
+    for (int i=0; challenge->challenges[i].status; i++)
+      if (strcmp(challenge->challenges[i].status, acme_status_invalid) == 0) {
+	ESP_LOGE(acme_tag, "%s : %s challenge[%d], starting a new order", __FUNCTION__, acme_status_invalid, i);
+        invalid = true;
+	break;
+      }
+
+  if (invalid) {
+    RequestNewOrder(acme_url);
+    WriteOrderInfo();
+    return;
+  }
+
+  if (strcmp(order->status, acme_status_pending) == 0) {
+    boolean ok = ValidateOrder();
+    ESP_LOGI(acme_tag, "%s: ValidateOrder -> %s", __FUNCTION__, ok ? "ok" : "fail");
+    WriteOrderInfo();
+  }
+  if (strcmp(order->status, acme_status_ready) == 0) {
+  }
+  if (strcmp(order->status, acme_status_processing) == 0) {
+  }
+  if (strcmp(order->status, acme_status_valid) == 0) {
+  }
+  if (strcmp(order->status, acme_status_invalid) == 0) {
+    // Something went wrong with this order, need to restart a new order
+    RequestNewOrder(acme_url);
+    WriteOrderInfo();
+    return;
+  }
+
+  
 #if 0
   // First steps : query the API URLs, and get a nonce.
   QueryAcmeDirectory();
@@ -361,6 +437,14 @@ boolean Acme::CreateNewAccount() {
   }
 
   return ok;
+}
+
+/*
+ * This creates a structure so the process gets triggered
+ */
+void Acme::CreateNewOrder() {
+  order = (Order *)malloc(sizeof(Order));
+  memset((void *)order, 0, sizeof(Order));
 }
 
 /*
@@ -940,7 +1024,7 @@ boolean Acme::RequestNewAccount(const char *contact, boolean onlyExisting) {
     ESP_LOGE(acme_tag, "%s: null message", __FUNCTION__);
     return false;
   }
-  ESP_LOGI(acme_tag, "%s : msg %s", __FUNCTION__, msg);
+  ESP_LOGD(acme_tag, "%s : msg %s", __FUNCTION__, msg);
 
   char *reply = PerformWebQuery(directory->newAccount, msg, acme_jose_json, 0);
   free(msg);
@@ -950,7 +1034,7 @@ boolean Acme::RequestNewAccount(const char *contact, boolean onlyExisting) {
   }
 
   // Decode JSON reply
-  ESP_LOGI(acme_tag, "%s: parsing JSON %s", __FUNCTION__, reply);
+  ESP_LOGD(acme_tag, "%s: parsing JSON %s", __FUNCTION__, reply);
 
   DynamicJsonBuffer jb;
   JsonObject &root = jb.parseObject(reply);
@@ -1241,12 +1325,12 @@ void Acme::RequestNewOrder(const char *url) {
     ESP_LOGE(acme_tag, "%s: null message", __FUNCTION__);
     return;
   }
-  ESP_LOGI(acme_tag, "%s -> %s", __FUNCTION__, msg);
+  ESP_LOGD(acme_tag, "%s -> %s", __FUNCTION__, msg);
 
   char *reply = PerformWebQuery(directory->newOrder, msg, acme_jose_json, 0);
   // free(msg);
   if (reply) {
-    ESP_LOGI(acme_tag, "PerformWebQuery -> %s", reply);
+    ESP_LOGD(acme_tag, "PerformWebQuery -> %s", reply);
   } else {
     ESP_LOGE(acme_tag, "PerformWebQuery -> null");
   }
@@ -1291,7 +1375,8 @@ boolean Acme::ReadOrderInfo() {
 
   FILE *f = fopen(fn, "r");
   if (f == NULL) {
-    ESP_LOGE(acme_tag, "Could not read order info from %s, %s", fn, strerror(errno));
+    if (errno != ENOENT)	// Don't bother telling the file simply isn't there
+      ESP_LOGE(acme_tag, "Could not read order info from %s, %s", fn, strerror(errno));
     free(fn);
     return false;
   }
@@ -1336,7 +1421,10 @@ boolean Acme::ReadOrderInfo() {
   ReadOrder(root);
 
   free(buffer);
-  ESP_LOGI(acme_tag, "%s : success", __FUNCTION__);
+
+  // ESP_LOGI(acme_tag, "%s : success", __FUNCTION__);
+  ESP_LOGI(acme_tag, "%s : success, order status %s", __FUNCTION__, order->status);
+
   return true;
 }
 
@@ -1391,8 +1479,13 @@ void Acme::WriteOrderInfo() {
 /*
  */
 void Acme::ReadOrder(JsonObject &json) {
-  order = (Order *)malloc(sizeof(Order));
-  memset((void *)order, 0, sizeof(Order));
+  // Treat the case separately where we have an empty order structure : it's brand new so no need to free/reallocate
+  if (order && order->status != 0)
+    ClearOrder();
+  if (order == 0) {
+    order = (Order *)malloc(sizeof(Order));
+    memset((void *)order, 0, sizeof(Order));
+  }
 
 /*
  * Replace a single statement such as
@@ -1508,12 +1601,17 @@ boolean Acme::ValidateOrderFTP() {
   // Remove the file
   // FIXME Can't find a API call (except when accessing SPIFFS) to remove a file in the ESP-IDF VFS layer
 
+/*
+ * Sometimes this is too soon.
+ * Leaving the challenges here makes sure we can pick this up in AcmeProcess()
+ */
+#if 0
   // Remove the file from FTP server
   RemoveFileFromWebserver(remotefn);
 
   // Remove our in-memory record
   ClearChallenge();
-
+#endif
   free(remotefn);
   free(localfn);
   return r;
@@ -1822,13 +1920,11 @@ void Acme::ReadChallenge(JsonObject &json) {
  */
 #define	BZZ(x)									\
   {										\
-    ESP_LOGI(acme_tag, "%s : reading %s", __FUNCTION__, #x);			\
     const char *x = json[#x];							\
     if (x) {									\
       ESP_LOGI(acme_tag, "%s : read %s as %s", __FUNCTION__, #x, x);		\
       challenge->x = strdup(x);							\
     } else {									\
-      ESP_LOGI(acme_tag, "%s : no %s read", __FUNCTION__, #x);			\
       challenge->x = 0;								\
     }										\
   }
@@ -1843,7 +1939,7 @@ void Acme::ReadChallenge(JsonObject &json) {
   // we're not reading the identifier, as we're not using it
 
   JsonArray &jca = json["challenges"];
-  ESP_LOGI(acme_tag, "%s : %d challenges", __FUNCTION__, jca.size());
+  ESP_LOGD(acme_tag, "%s : %d challenges", __FUNCTION__, jca.size());
   challenge->challenges = (ChallengeItem *)calloc(jca.size()+1, sizeof(ChallengeItem));
   // Null-terminate
   challenge->challenges[jca.size()]._type = 0;
