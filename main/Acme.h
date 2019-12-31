@@ -76,19 +76,13 @@ class Acme {
 
     void CreateNewOrder();
     void OrderRemove(char *);
-    void OrderStart();
-    void ChallengeStart();
-    void ListFiles();
     void CertificateDownload();
-#if 0
-    struct Certificate {
-      mbedtls_x509_crt	*cert;
-    };
+    void RenewCertificate();
 
-    Certificate *issueCertificate(char *domain);
+    void OrderStart();				// Debug
+    void ChallengeStart();			// Debug
+    void ListFiles();				// Debug
 
-    void setCertificate(const char *cert);	// FIXME debug, remove this
-#endif
   private:
     const char *acme_tag = "Acme";		// For ESP_LOGx calls
 
@@ -232,7 +226,6 @@ class Acme {
     void	SetAcmeUserAgentHeader(esp_http_client_handle_t);
 
     void	ReadCertificate();		// From local file
-    void	RenewCertificate();
 
     // Forward declarations
     struct Directory;

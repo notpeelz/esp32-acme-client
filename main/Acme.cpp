@@ -45,6 +45,10 @@
 #include <esp_http_client.h>
 #include <FtpClient.h>
 
+// I'd like to avoid these ..
+#include "SPIFFS.h"
+#include "FS.h"
+
 /*
  * CTOR / DTOR
  */
@@ -274,15 +278,13 @@ void Acme::loop(time_t now) {
  * This function also doesn't create private keys, use the public API to do that or to supply them.
  */
 static int process_count = 5;
+
 void Acme::AcmeProcess() {
+  ESP_LOGI(acme_tag, "%s", __FUNCTION__);
 
   if (process_count-- < 0) {
-    delay(5000);
     return;
   }
-
-  ESP_LOGI(acme_tag, "%s", __FUNCTION__);
-  delay(5000);
 
   if (account == 0) {
     ESP_LOGI(acme_tag, "%s account 0", __FUNCTION__);
@@ -409,6 +411,7 @@ boolean Acme::CreateNewAccount() {
  * This creates a structure so the process gets triggered
  */
 void Acme::CreateNewOrder() {
+  ClearOrder();
   order = (Order *)malloc(sizeof(Order));
   memset((void *)order, 0, sizeof(Order));
 }
@@ -1397,7 +1400,8 @@ boolean Acme::ReadOrderInfo() {
   free(buffer);
 
   // ESP_LOGI(acme_tag, "%s : success", __FUNCTION__);
-  ESP_LOGI(acme_tag, "%s : success, order status %s", __FUNCTION__, order->status);
+  if (order->status)
+    ESP_LOGI(acme_tag, "%s : success, order status %s", __FUNCTION__, order->status);
 
   return true;
 }
@@ -1422,23 +1426,27 @@ void Acme::WriteOrderInfo() {
 
   DynamicJsonBuffer jb;
   JsonObject &jo = jb.createObject();
-  jo[acme_json_status] = order->status;
-  jo[acme_json_expires] = order->expires;
+  if (order->status) jo[acme_json_status] = order->status;
+  if (order->status) jo[acme_json_expires] = order->expires;
   if (order->finalize) jo[acme_json_finalize] = order->finalize;
   if (order->certificate) jo[acme_json_certificate] = order->certificate;
 
-  // identifiers array must be NULL terminated
-  JsonArray &jia = jo.createNestedArray(acme_json_identifiers);
-  for (int i=0; order->identifiers[i]._type != 0 || order->identifiers[i].value != 0; i++) {
-    JsonObject &jie = jia.createNestedObject();
-    jie[acme_json_type] = order->identifiers[i]._type;
-    jie[acme_json_value] = order->identifiers[i].value;
+  if (order->identifiers) {
+    // identifiers array must be NULL terminated
+    JsonArray &jia = jo.createNestedArray(acme_json_identifiers);
+    for (int i=0; order->identifiers[i]._type != 0 || order->identifiers[i].value != 0; i++) {
+      JsonObject &jie = jia.createNestedObject();
+      jie[acme_json_type] = order->identifiers[i]._type;
+      jie[acme_json_value] = order->identifiers[i].value;
+    }
   }
 
-  // authorizations array must be NULL terminated
-  JsonArray &jaa = jo.createNestedArray(acme_json_authorizations);
-  for (int i=0; order->authorizations[i]; i++)
-    jaa.add(order->authorizations[i]);
+  if (order->authorizations) {
+    // authorizations array must be NULL terminated
+    JsonArray &jaa = jo.createNestedArray(acme_json_authorizations);
+    for (int i=0; order->authorizations[i]; i++)
+      jaa.add(order->authorizations[i]);
+  }
 
   char *output = (char *)malloc(1536);	// FIX ME
   jo.printTo(output, 1536);		// FIX ME
@@ -1483,7 +1491,8 @@ void Acme::ReadOrder(JsonObject &json) {
   BZZ(finalize);
   BZZ(certificate);
 
-  order->t_expires = timestamp(order->expires);
+  if (order->expires)
+    order->t_expires = timestamp(order->expires);
 
 #undef BZZ
 
@@ -1726,8 +1735,7 @@ boolean Acme::ReadAuthorizationReply(JsonObject &json) {
   }
 
   free(order->status);
-  // order->status = strdup(status);
-  order->status = strdup(acme_status_ready);
+  order->status = strdup(acme_status_ready);	// Important note : advancing our local order to "ready"
   WriteOrderInfo();
   return true;
 }
@@ -2210,53 +2218,18 @@ void Acme::RemoveFileFromWebserver(char *remotefn) {
   ftpc->ftpClientQuit(nb);
 }
 
-#include "SPIFFS.h"
-#include "FS.h"
 void Acme::OrderRemove(char *dir) {
   ClearOrder();
+
+  if (order_fn == 0)
+    return;
+
   SPIFFS.begin();
 
-  if (SPIFFS.remove("/spiffs/acme/order.json"))
-    ESP_LOGI(acme_tag, "Removed /spiffs/acme/order.json");
-  if (SPIFFS.remove("/acme/order.json"))
-    ESP_LOGI(acme_tag, "Removed /acme/order.json");
-
-#if 0
-  File root = SPIFFS.open(dir);
-  if (!root) {
-    ESP_LOGE(acme_tag, "Failed to open %s", dir);
-  } else if (!root.isDirectory()) {
-    ESP_LOGE(acme_tag, "/ is not a directory");
-  } else {
-
-    File file = root.openNextFile();
-    while(file){
-        if(file.isDirectory()){
-            ESP_LOGI(acme_tag, "Dir: %s", file.name());
-                // recursive : listDir(fs, file.name(), levels -1);
-        } else {
-            ESP_LOGI(acme_tag, "File: %s size %d", file.name(), file.size());
-        }
-        file = root.openNextFile();
-    }
-  }
-#endif
-
-#if 0
-#define R(x)						\
-  if (SPIFFS.remove(x)) {				\
-    ESP_LOGI(acme_tag, "remove(%s) success", x);	\
-  } else {						\
-    ESP_LOGE(acme_tag, "remove(%s) failed", x);		\
-  }
-
-  R("/test.me");
-  R("/private-key.der");
-  R("/private-key.pem");
-  R("/token");
-  R("/account.pem");
-  R("/acme/newkey.pem");
-#endif
+  if (SPIFFS.remove(order_fn))
+    ESP_LOGI(acme_tag, "Removed %s", order_fn);
+  else
+    ESP_LOGE(acme_tag, "Failed to remove %s", order_fn);
 
   SPIFFS.end();
 }
@@ -2415,13 +2388,6 @@ void Acme::ReadFinalizeReply(JsonObject &json) {
   ReadOrder(json);
 }
 
-#if 0
-// Debug
-void Acme::setCertificate(const char *cert) {
-  order->certificate = strdup(cert);
-}
-#endif
-
 /*
  * Convert timestamp from ACME (e.g. 2019-11-25T16:56:52Z) into time_t.
  */
@@ -2498,6 +2464,9 @@ time_t Acme::TimeMbedToTimestamp(mbedtls_x509_time t) {
  * and replacing the old with the new only happens when the new certificate is successfully downloaded.
  */
 void Acme::RenewCertificate() {
+  ESP_LOGI(acme_tag, "%s", __FUNCTION__);
+  CreateNewOrder();
+  WriteOrderInfo();
 }
 
 mbedtls_x509_crt *Acme::getCertificate() {
