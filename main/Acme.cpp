@@ -343,10 +343,24 @@ void Acme::AcmeProcess() {
     WriteOrderInfo();
   }
   if (strcmp(order->status, acme_status_ready) == 0) {
+    FinalizeOrder();
+    WriteOrderInfo();
   }
   if (strcmp(order->status, acme_status_processing) == 0) {
+    ;
   }
   if (strcmp(order->status, acme_status_valid) == 0) {
+    if (order->certificate) {
+      DownloadCertificate();
+      WriteOrderInfo();
+    }
+
+    free(order->status);
+    order->status = strdup(acme_status_downloaded);		// an additional status
+    WriteOrderInfo();
+  }
+  if (strcmp(order->status, acme_status_downloaded) == 0) {
+    ;
   }
   if (strcmp(order->status, acme_status_invalid) == 0) {
     // Something went wrong with this order, need to restart a new order
@@ -1138,10 +1152,10 @@ void Acme::ClearAccount() {
     if (account->createdAt) free(account->createdAt);
     free(account);
     account = 0;
-
-    if (location) free(location);
-    location = 0;
   }
+
+  if (location) free(location);
+  location = 0;
 }
 
 void Acme::ClearOrderContent() {
@@ -1611,15 +1625,17 @@ boolean Acme::ValidateOrderFTP() {
 
 /*
  * Sometimes this is too soon.
- * Leaving the challenges here makes sure we can pick this up in AcmeProcess()
+ * Leaving the challenges here makes sure we can pick this up in AcmeProcess() in case of failures,
+ * only clean up on success.
  */
-#if 0
-  // Remove the file from FTP server
-  RemoveFileFromWebserver(remotefn);
+  if (r) {
+    // Remove the file from FTP server
+    RemoveFileFromWebserver(remotefn);
 
-  // Remove our in-memory record
-  ClearChallenge();
-#endif
+    // Remove our in-memory record
+    ClearChallenge();
+  }
+
   free(remotefn);
   free(localfn);
   return r;
@@ -1758,7 +1774,8 @@ boolean Acme::ReadAuthorizationReply(JsonObject &json) {
   }
 
   free(order->status);
-  order->status = strdup(status);
+  // order->status = strdup(status);
+  order->status = strdup(acme_status_ready);
   WriteOrderInfo();
   return true;
 }
@@ -2090,7 +2107,7 @@ char *Acme::PerformWebQuery(const char *query, const char *topost, const char *a
       ESP_LOGE(acme_tag, "%s: client_set_header(%s=%s) error %d %s", __FUNCTION__, acme_accept_header, accept_message, err, esp_err_to_name(err));
       // Don't fail on this.
     } else {
-      ESP_LOGD(acme_tag, "Client_set_header(%s=%s)", acme_accept_header, accept_message);
+      ESP_LOGI(acme_tag, "Client_set_header(%s=%s)", acme_accept_header, accept_message);
     }
   }
 

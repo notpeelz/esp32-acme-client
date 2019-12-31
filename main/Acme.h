@@ -136,6 +136,7 @@ class Acme {
     const char	*acme_status_processing =	"processing";
     const char	*acme_status_pending =		"pending";
     const char	*acme_status_invalid =		"invalid";
+    const char	*acme_status_downloaded =	"downloaded";
 
     // Identify ourselves as :
     const char *acme_agent_template = "EspAlarm ACME client/0.1, built on esp-idf %s (https://esp32-acme-client.sourceforge.io)";
