@@ -208,6 +208,7 @@ class Acme {
 
     void	RequestNewOrder(const char *url);
     void	ClearOrder();
+    void	ClearOrderContent();
     boolean	ReadOrderInfo();
     void	WriteOrderInfo();
     void	ReadOrder(JsonObject &);

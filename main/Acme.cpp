@@ -729,6 +729,7 @@ void Acme::QueryAcmeDirectory() {
     return;
   }
   directory = (Directory *)malloc(sizeof(Directory));
+  memset(directory, 0, sizeof(Directory));
 
 #define SD(x,sx) 						\
 	{							\
@@ -1143,24 +1144,30 @@ void Acme::ClearAccount() {
   }
 }
 
+void Acme::ClearOrderContent() {
+  if (order->status) free(order->status);
+  if (order->expires) free(order->expires);
+  if (order->finalize) free(order->finalize);
+  if (order->certificate) free(order->certificate);
+  if (order->identifiers) {
+    for (int i=0; order->identifiers[i]._type; i++) {
+      free(order->identifiers[i]._type);
+      free(order->identifiers[i].value);
+    }
+    free(order->identifiers);
+  }
+  if (order->authorizations) {
+    for (int i=0; order->authorizations[i]; i++)
+      free(order->authorizations[i]);
+    free(order->authorizations);
+  }
+
+  memset(order, 0, sizeof(Order));
+}
+
 void Acme::ClearOrder() {
   if (order) {
-    if (order->status) free(order->status);
-    if (order->expires) free(order->expires);
-    if (order->finalize) free(order->finalize);
-    if (order->certificate) free(order->certificate);
-    if (order->identifiers) {
-      for (int i=0; order->identifiers[i]._type; i++) {
-        free(order->identifiers[i]._type);
-        free(order->identifiers[i].value);
-      }
-      free(order->identifiers);
-    }
-    if (order->authorizations) {
-      for (int i=0; order->authorizations[i]; i++)
-        free(order->authorizations[i]);
-      free(order->authorizations);
-    }
+    ClearOrderContent();
 
     free(order);
     order = 0;
@@ -1296,6 +1303,7 @@ void Acme::WriteAccountInfo() {
  *
  */
 void Acme::RequestNewOrder(const char *url) {
+  ClearOrderContent();
   ESP_LOGI(acme_tag, "%s (%s)", __FUNCTION__, url);
   /*
    * prot :
