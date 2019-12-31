@@ -1154,7 +1154,7 @@ int ftpPASS(PFTPCONTEXT context, const char *params)
   /*
    * we have username saved in context->GPBuffer from USER command
    */
-  if (config->ftpUser() && (strcmp(context->GPBuffer, config->ftpUser()) == 0))
+  // if (config->ftpUser() && (strcmp(context->GPBuffer, config->ftpUser()) == 0))
   {
     memset(context->RootDir, 0, sizeof(context->RootDir));
     memset(temptext, 0, sizeof(temptext));

@@ -75,6 +75,8 @@ Acme::Acme() {
 
   filename_prefix = "";
 
+  connected = false;
+
   ctr_drbg = (mbedtls_ctr_drbg_context *)calloc(1, sizeof(mbedtls_ctr_drbg_context));
   mbedtls_ctr_drbg_init(ctr_drbg);
 
@@ -172,10 +174,16 @@ void Acme::GenerateCertificateKey() {
  * Setters also write the key into a file.
  */
 mbedtls_pk_context *Acme::getAccountKey() {
+  if (accountkey == 0) {
+    ReadAccountKey();
+  }
   return accountkey;
 }
 
 mbedtls_pk_context *Acme::getCertificateKey() {
+  if (certkey == 0) {
+    ReadCertKey();
+  }
   return certkey;
 }
 
@@ -201,6 +209,8 @@ void Acme::setCertificateKey(mbedtls_pk_context *ck) {
 void Acme::NetworkConnected(void *ctx, system_event_t *event) {
   ESP_LOGI(acme_tag, "%s", __FUNCTION__);
 
+  connected = true;
+
   /*
    * Get startup info :
    * - the API calls for the ACME server
@@ -216,6 +226,7 @@ void Acme::NetworkConnected(void *ctx, system_event_t *event) {
 }
 
 void Acme::NetworkDisconnected(void *ctx, system_event_t *event) {
+  connected = false;
 }
 
 /*
@@ -317,6 +328,39 @@ void Acme::AcmeProcess() {
     WriteOrderInfo();
   }
 #endif
+}
+
+boolean Acme::CreateNewAccount() {
+  if (!connected) return false;
+  if (directory == 0) {
+    QueryAcmeDirectory();
+    RequestNewNonce();
+  }
+
+  if (email_address == 0) {
+    ESP_LOGE(acme_tag, "%s failed : no email address", __FUNCTION__);
+    return false;
+  }
+
+  ESP_LOGI(acme_tag, "%s: check whether account already exists", __FUNCTION__);
+  // Check if it exists already
+  if (RequestNewAccount(email_address, true)) {
+    ESP_LOGI(acme_tag, "%s: ... it does !", __FUNCTION__);
+    WriteAccountInfo();
+    return true;	// Return successfully then
+  }
+
+  ESP_LOGI(acme_tag, "%s: creating account %s ...", __FUNCTION__, email_address);
+  // Otherwise, try to create one
+  boolean ok = RequestNewAccount(email_address, false);
+  if (ok) {
+    ESP_LOGI(acme_tag, "%s: success : account %s created", __FUNCTION__, email_address);
+    WriteAccountInfo();
+  } else {
+    ESP_LOGE(acme_tag, "%s: failed", __FUNCTION__);
+  }
+
+  return ok;
 }
 
 /*
@@ -580,6 +624,7 @@ String Acme::Signature(String pr, String pl) {
  * This gives us a set of URLs for our queries. Put this in a structure for later use.
  */
 void Acme::QueryAcmeDirectory() {
+  if (!connected) return;
   ESP_LOGI(acme_tag, "Querying directory at %s", acme_server_url);
   ClearDirectory();
 
@@ -804,11 +849,22 @@ void Acme::WritePrivateKey(mbedtls_pk_context *pk, const char *ifn) {
   }
 
   len = strlen((char *)keystring);
-  ESP_LOGI(acme_tag, "%s: private key len %d", __FUNCTION__, len);
-  ESP_LOGI(acme_tag, "Key : %s", keystring);
+  ESP_LOGD(acme_tag, "%s: private key len %d", __FUNCTION__, len);
+  ESP_LOGD(acme_tag, "Key : %s", keystring);
 
-  fwrite(keystring, 1, len, f);
-  fclose(f);
+  if (fwrite(keystring, 1, len, f) != len) {
+    ESP_LOGE(acme_tag, "%s: write private key to %s failed, %d %s", __FUNCTION__, fn, errno, strerror(errno));
+    fclose(f);
+    free(fn);
+    return;
+  }
+  if (fclose(f) != 0) {
+    ESP_LOGE(acme_tag, "%s: write private key to %s failed, %d %s", __FUNCTION__, fn, errno, strerror(errno));
+    free(fn);
+    return;
+  }
+
+  ESP_LOGI(acme_tag, "%s: wrote private key to %s", __FUNCTION__, fn);
   free(fn);
 }
 
@@ -846,15 +902,22 @@ void Acme::WritePrivateKey() {
 
 /*
  * Account handling
+ * The "onlyExisting" parameter is used to check whether an account pre-exists. Don't use error logging then.
  */
-void Acme::RequestNewAccount(const char *contact, boolean onlyExisting) {
+boolean Acme::RequestNewAccount(const char *contact, boolean onlyExisting) {
   char *msg, *jwk, *payload;
 
-  if (directory == 0)
-    return;
+  if (directory == 0) {
+    ESP_LOGE(acme_tag, "%s(%s) fail, no directory", __FUNCTION__, contact);
+    return false;
+  }
 
   if (rsa == 0) {
     ReadAccountKey();
+    if (rsa == 0) {
+      ESP_LOGE(acme_tag, "%s(%s) fail, rsa null", __FUNCTION__, contact);
+      return false;
+    }
   }
 
   if (contact) {	// email address is included
@@ -875,26 +938,26 @@ void Acme::RequestNewAccount(const char *contact, boolean onlyExisting) {
 
   if (! msg) {
     ESP_LOGE(acme_tag, "%s: null message", __FUNCTION__);
-    return;
+    return false;
   }
-  ESP_LOGD(acme_tag, "%s : msg %s", __FUNCTION__, msg);
+  ESP_LOGI(acme_tag, "%s : msg %s", __FUNCTION__, msg);
 
   char *reply = PerformWebQuery(directory->newAccount, msg, acme_jose_json, 0);
   free(msg);
   if (reply == 0) {
     ESP_LOGE(acme_tag, "%s PerformWebQuery -> null", __FUNCTION__);
-    return;
+    return false;
   }
 
   // Decode JSON reply
-  ESP_LOGD(acme_tag, "%s: parsing JSON %s", __FUNCTION__, reply);
+  ESP_LOGI(acme_tag, "%s: parsing JSON %s", __FUNCTION__, reply);
 
   DynamicJsonBuffer jb;
   JsonObject &root = jb.parseObject(reply);
   if (! root.success()) {
     ESP_LOGE(acme_tag, "%s : could not parse JSON", __FUNCTION__);
     free(reply);
-    return;
+    return false;
   }
   ESP_LOGD(acme_tag, "%s : JSON opened", __FUNCTION__);
 
@@ -903,10 +966,11 @@ void Acme::RequestNewAccount(const char *contact, boolean onlyExisting) {
     const char *reply_type = root[acme_json_type];
     const char *reply_detail = root[acme_json_detail];
 
-    ESP_LOGE(acme_tag, "%s: failure %s %s %s", __FUNCTION__, reply_status, reply_type, reply_detail);
+    if (!onlyExisting)
+      ESP_LOGE(acme_tag, "%s: failure %s %s %s", __FUNCTION__, reply_status, reply_type, reply_detail);
 
     free(reply);
-    return;
+    return false;
   } else if (reply_status == 0) {
     ESP_LOGE(acme_tag, "%s: null reply_status", __FUNCTION__);
   } else {
@@ -916,7 +980,7 @@ void Acme::RequestNewAccount(const char *contact, boolean onlyExisting) {
   ReadAccount(root);
 
   free(reply);
-  return;
+  return true;
 }
 
 // FIXME protect against missing fields, will now call strdup(0)
@@ -2393,9 +2457,11 @@ void Acme::ReadCertificate() {
     return;
   }
 
-  char buf[80];
-  mbedtls_strerror(ret, buf, sizeof(buf));
-  ESP_LOGE(acme_tag, "%s: could not read certificate from %s (error 0x%04x, %s)", __FUNCTION__, fn, -ret, buf);
+  if (ret != MBEDTLS_ERR_PK_FILE_IO_ERROR) {	/* Only print unexpected errors, a non-existing certificate file isn't. */
+    char buf[80];
+    mbedtls_strerror(ret, buf, sizeof(buf));
+    ESP_LOGE(acme_tag, "%s: could not read certificate from %s (error 0x%04x, %s)", __FUNCTION__, fn, -ret, buf);
+  }
   mbedtls_x509_crt_free(certificate);
   free(certificate);
   certificate = 0;
@@ -2450,7 +2516,7 @@ void Acme::setAccountFilename(const char *fn) {
 
 void Acme::setAccountKeyFilename(const char *fn) {
   account_key_fn = fn;
-  ReadAccountKey();
+  // ReadAccountKey();
 }
 
 void Acme::setOrderFilename(const char *fn) {
@@ -2459,7 +2525,7 @@ void Acme::setOrderFilename(const char *fn) {
 
 void Acme::setCertKeyFilename(const char *fn) {
   cert_key_fn = fn;
-  ReadCertKey();
+  // ReadCertKey();
 }
 
 void Acme::setCertificateFilename(const char *fn) {

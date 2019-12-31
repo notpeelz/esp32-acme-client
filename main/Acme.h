@@ -70,6 +70,7 @@ class Acme {
     void setAccountKey(mbedtls_pk_context *ak);
     void setCertificateKey(mbedtls_pk_context *ck);
 
+    boolean CreateNewAccount();
     void AcmeProcess();				// Run the ACME client FSM (finite state machine)
     mbedtls_x509_crt *getCertificate();
 
@@ -198,7 +199,7 @@ class Acme {
     void	ReadAccountKey();
     void	ReadCertKey();
 
-    void	RequestNewAccount(const char *contact, boolean onlyExisting);
+    boolean	RequestNewAccount(const char *contact, boolean onlyExisting);
     boolean	ReadAccountInfo();
     void	WriteAccountInfo();
     void	ReadAccount(JsonObject &);
@@ -251,6 +252,7 @@ class Acme {
 
     int		http01_ix;
     time_t	last_run;
+    boolean	connected;
 
     mbedtls_rsa_context		*rsa;
     mbedtls_ctr_drbg_context	*ctr_drbg;
