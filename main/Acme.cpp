@@ -11,7 +11,7 @@
  * We're implementing ACME v2 (RFC 8555), which has status "proposed standard".
  * ACME v1 has risks and should be avoided.
  *
- * Copyright (c) 2019 Danny Backx
+ * Copyright (c) 2019, 2020 Danny Backx
  *
  * License (GNU Lesser General Public License) :
  *
@@ -74,6 +74,10 @@ Acme::Acme() {
   order_fn = 0;
   cert_key_fn = 0;
   cert_fn = 0;
+
+  ftp_server = 0;
+  ftp_user = ftp_pass = 0;
+  ftp_path = 0;
 
   accountkey = 0;
   certkey = 0;
@@ -152,6 +156,11 @@ Acme::~Acme() {
   if (account_key_fn) free(account_key_fn);
   if (order_fn) free(order_fn);
   if (cert_key_fn) free(cert_key_fn);
+
+  if (ftp_server) free(ftp_server);
+  if (ftp_user) free(ftp_user);
+  if (ftp_pass) free(ftp_pass);
+  if (ftp_path) free(ftp_path);
 #endif
 
   if (certificate) {
@@ -265,6 +274,7 @@ void Acme::loop(time_t now) {
 
   // TODO
   if (until - month < now) {
+    ESP_LOGI(acme_tag, "Renewing certificate from %s", __FUNCTION__);
     RenewCertificate();
   }
 }
@@ -1557,6 +1567,11 @@ boolean Acme::ValidateOrder() {
 boolean Acme::ValidateOrderFTP() {
   ESP_LOGI(acme_tag, "%s", __FUNCTION__);
 
+  if (! (ftp_user && ftp_path && ftp_server && ftp_pass)) {
+    ESP_LOGI(acme_tag, "%s: failed, incomplete FTP setup", __FUNCTION__);
+    return false;
+  }
+
   // This uses a common (non-IoT) web server on which we can store a file. Use for cases with e.g. several IoT devices.
   // void Acme::StoreFileOnWebserver(char *localfn, char *remotefn);
   DownloadAuthorizationResource();
@@ -1589,8 +1604,8 @@ boolean Acme::ValidateOrderFTP() {
   }
 
   // FTP the file
-  char *remotefn = (char *)malloc(strlen(CONFIG_FTP_WEBSERVER_PATH) + strlen(token) + strlen(well_known) + 5);
-  sprintf(remotefn, "%s%s%s", CONFIG_FTP_WEBSERVER_PATH, well_known, token);
+  char *remotefn = (char *)malloc(strlen(ftp_path) + strlen(token) + strlen(well_known) + 5);
+  sprintf(remotefn, "%s%s%s", ftp_path, well_known, token);
 
   StoreFileOnWebserver(localfn, remotefn);
 
@@ -2197,15 +2212,19 @@ esp_err_t Acme::HttpEvent(esp_http_client_event_t *event) {
 void Acme::StoreFileOnWebserver(char *localfn, char *remotefn) {
   NetBuf_t	*nb = 0;
 
+  if (! (ftp_user && ftp_path && ftp_server && ftp_pass)) {
+    ESP_LOGI(acme_tag, "%s: failed, incomplete setup", __FUNCTION__);
+    return;
+  }
   ESP_LOGI(acme_tag, "%s(%s,%s)", __FUNCTION__, localfn, remotefn);
 
   FtpClient	*ftpc = getFtpClient();
-  ftpc->ftpClientConnect(CONFIG_FTP_WEBSERVER_IP, 21, &nb);
-  ftpc->ftpClientLogin(CONFIG_FTP_WEBSERVER_FTPUSER, CONFIG_FTP_WEBSERVER_FTPPASS, nb);
+  ftpc->ftpClientConnect(ftp_server, 21, &nb);
+  ftpc->ftpClientLogin(ftp_user, ftp_pass, nb);
   if (remotefn[0] != '/') {
-    int len = strlen(remotefn) + strlen(CONFIG_FTP_WEBSERVER_PATH) + 4;
+    int len = strlen(remotefn) + strlen(ftp_path) + 4;
     char *b = (char *)malloc(len);
-    sprintf(b, "%s/%s", CONFIG_FTP_WEBSERVER_PATH, remotefn);
+    sprintf(b, "%s/%s", ftp_path, remotefn);
     ftpc->ftpClientPut(localfn, b, FTP_CLIENT_BINARY, nb);
     free(b);
   } else {
@@ -2217,15 +2236,19 @@ void Acme::StoreFileOnWebserver(char *localfn, char *remotefn) {
 void Acme::RemoveFileFromWebserver(char *remotefn) {
   NetBuf_t	*nb = 0;
 
+  if (! (ftp_user && ftp_path && ftp_server && ftp_pass)) {
+    ESP_LOGI(acme_tag, "%s: failed, incomplete setup", __FUNCTION__);
+    return;
+  }
   ESP_LOGI(acme_tag, "%s(%s)", __FUNCTION__, remotefn);
 
   FtpClient	*ftpc = getFtpClient();
-  ftpc->ftpClientConnect(CONFIG_FTP_WEBSERVER_IP, 21, &nb);
-  ftpc->ftpClientLogin(CONFIG_FTP_WEBSERVER_FTPUSER, CONFIG_FTP_WEBSERVER_FTPPASS, nb);
+  ftpc->ftpClientConnect(ftp_server, 21, &nb);
+  ftpc->ftpClientLogin(ftp_user, ftp_pass, nb);
   if (remotefn[0] != '/') {
-    int len = strlen(remotefn) + strlen(CONFIG_FTP_WEBSERVER_PATH) + 4;
+    int len = strlen(remotefn) + strlen(ftp_path) + 4;
     char *b = (char *)malloc(len);
-    sprintf(b, "%s/%s", CONFIG_FTP_WEBSERVER_PATH, remotefn);
+    sprintf(b, "%s/%s", ftp_path, remotefn);
     ftpc->ftpClientDelete(b, nb);
     free(b);
   } else {
@@ -2537,4 +2560,20 @@ void Acme::ReadAccountKey() {
 void Acme::ReadCertKey() {
   if (cert_key_fn)
     certkey = ReadPrivateKey(cert_key_fn);
+}
+
+void Acme::setFtpServer(const char *s) {
+  ftp_server = s;
+}
+
+void Acme::setFtpUser(const char *s) {
+  ftp_user = s;
+}
+
+void Acme::setFtpPassword(const char *s) {
+  ftp_pass = s;
+}
+
+void Acme::setFtpPath(const char *s) {
+  ftp_path = s;
 }

@@ -2,7 +2,7 @@
  * This module implements the ACME (Automated Certicifate Management Environment) protocol.
  * A client for Let's Encrypt (https://letsencrypt.org).
  *
- * Copyright (c) 2019 Danny Backx
+ * Copyright (c) 2019, 2020 Danny Backx
  *
  * License (GNU Lesser General Public License) :
  *
@@ -59,6 +59,10 @@ class Acme {
     void setCertKeyFilename(const char *);
     void setFilenamePrefix(const char *);
     void setCertificateFilename(const char *);
+    void setFtpServer(const char *);
+    void setFtpUser(const char *);
+    void setFtpPassword(const char *);
+    void setFtpPath(const char *);
 
     void loop(time_t now);
 
@@ -95,6 +99,11 @@ class Acme {
     const char *account_fn;			// Account status json filename, e.g. "account.json"
     const char *order_fn;			// Order status json filename, e.g. "order.json"
     const char *cert_fn;			// Certificate filename, e.g. "certificate.pem"
+
+    const char *ftp_server;
+    const char *ftp_user;
+    const char *ftp_pass;
+    const char *ftp_path;
 
     // String constants for use in the code
     const char *acme_agent_header = "User-Agent";
