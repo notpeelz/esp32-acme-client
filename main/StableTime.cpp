@@ -29,7 +29,6 @@
 StableTime *stableTime;
 
 StableTime::StableTime() {
-  // stableTime = this;		// Already happens in Keypad.cpp
 }
 
 StableTime::~StableTime() {
