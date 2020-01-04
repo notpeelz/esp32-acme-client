@@ -22,6 +22,18 @@ This is unfinished software. Current status and plans :
 - (done) run against the production server
 - (done, on staging) renew certificate (I have three months to get there)
 
+Build notes :
+- you may have to augment default stack sizes such as
+    CONFIG_SYSTEM_EVENT_TASK_STACK_SIZE=6144
+    CONFIG_MAIN_TASK_STACK_SIZE=6144
+  in the ESP-IDF "make menuconfig".
+
+- building the example requires you to copy an include file and change its contents to match your
+  local requirements (e.g. your WiFi credentials) :
+    % cp main/secrets.h.sample main/secrets.h
+    % vi main/secrets.h
+    % make
+
 API :
 - This is a C++ class, with several methods that you must call :
     Acme();				Constructor
