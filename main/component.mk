@@ -25,10 +25,12 @@ CXXFLAGS += ${MY_CFLAGS}
 
 COMPONENT_SRCDIRS += ../libraries \
 	../libraries/arduinojson \
+	../libraries/acmeclient \
 	../libraries/ftpclient/src
 
 COMPONENT_ADD_INCLUDEDIRS := ../libraries \
 	../libraries/arduinojson \
+	../libraries/acmeclient \
 	../libraries/ftpclient/include \
 	.
 
