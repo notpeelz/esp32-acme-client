@@ -35,7 +35,6 @@
 */
 
 #include <Arduino.h>
-#include "Config.h"
 
 #include <stdlib.h>
 #include <stdio.h>

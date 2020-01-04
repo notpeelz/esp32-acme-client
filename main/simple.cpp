@@ -21,7 +21,6 @@
  */
 
 #include <Arduino.h>
-#include "Config.h"
 #include "StableTime.h"
 #include "acmeclient/Acme.h"
 

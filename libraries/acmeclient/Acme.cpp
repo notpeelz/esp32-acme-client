@@ -34,7 +34,6 @@
 #include "secrets.h"
 #include "esp_log.h"
 
-#include "Config.h"
 #include "Acme.h"
 
 #include <sys/socket.h>
