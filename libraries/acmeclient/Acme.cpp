@@ -694,6 +694,11 @@ String Acme::Signature(String pr, String pl) {
  */
 void Acme::QueryAcmeDirectory() {
   if (!connected) return;
+  if (acme_server_url == 0) {
+    ESP_LOGI(acme_tag, "%s: no ACME server configured", __FUNCTION__);
+    return;
+  }
+
   ESP_LOGI(acme_tag, "Querying directory at %s", acme_server_url);
   ClearDirectory();
 
@@ -978,7 +983,7 @@ boolean Acme::RequestNewAccount(const char *contact, boolean onlyExisting) {
   char *msg, *jwk, *payload;
 
   if (directory == 0) {
-    ESP_LOGE(acme_tag, "%s(%s) fail, no directory", __FUNCTION__, contact);
+    ESP_LOGE(acme_tag, "%s fail, no directory", __FUNCTION__);
     return false;
   }
 
@@ -2442,6 +2447,11 @@ time_t Acme::timestamp(const char *ts) {
  * Read the certificate on local storage
  */
 void Acme::ReadCertificate() {
+  if (filename_prefix == 0 || cert_fn == 0) {
+    ESP_LOGE(acme_tag, "%s fail, no file name", __FUNCTION__);
+    return;
+  }
+
   int fnl = strlen(filename_prefix) + strlen(cert_fn) + 3;
   char *fn = (char *)malloc(fnl);
   sprintf(fn, "%s/%s", filename_prefix, cert_fn);
