@@ -71,6 +71,7 @@ class Acme {
     void setWebServer(httpd_handle_t);
 
     void loop(time_t now);
+    boolean HaveValidCertificate(time_t);
     boolean HaveValidCertificate();
 
     // Private keys

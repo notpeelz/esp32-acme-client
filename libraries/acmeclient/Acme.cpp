@@ -2520,10 +2520,31 @@ void Acme::ReadCertificate() {
 }
 
 boolean Acme::HaveValidCertificate() {
+  struct timeval now;
+  gettimeofday(&now, 0);
+
+  return HaveValidCertificate(now.tv_sec);
+}
+
+boolean Acme::HaveValidCertificate(time_t now) {
   if (certificate == 0)
     return false;
+  if (now < 1000)
+    return true;	// No false alarms based on invalid time
 
-  // FIX ME check date ranges
+  // Check date ranges
+  time_t vf = TimeMbedToTimestamp(certificate->valid_from);
+  if (now < vf) {
+    ESP_LOGE(acme_tag, "Certificate is not valid yet");
+    ESP_LOGE(acme_tag, "Certificate is not valid yet : %ld < %ld", now, vf);
+    return false;
+  }
+
+  time_t vt = TimeMbedToTimestamp(certificate->valid_to);
+  if (vt < now) {
+    ESP_LOGE(acme_tag, "Certificate has expired");
+    return false;
+  }
 
   return true;
 }
