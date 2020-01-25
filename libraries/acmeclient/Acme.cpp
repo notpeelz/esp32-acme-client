@@ -45,7 +45,6 @@
 #include <mbedtls/sha1.h>
 #include <mbedtls/x509_csr.h>
 #include <esp_http_client.h>
-#include <FtpClient.h>
 
 // I'd like to avoid these ..
 #include "SPIFFS.h"
@@ -80,6 +79,9 @@ Acme::Acme() {
   ftp_server = 0;
   ftp_user = ftp_pass = 0;
   ftp_path = 0;
+
+  webserver = 0;
+  wsconf = 0;
 
   accountkey = 0;
   certkey = 0;
@@ -148,6 +150,11 @@ Acme::~Acme() {
   entropy = 0;
   free(ctr_drbg);
   ctr_drbg = 0;
+
+  if (wsconf) {
+    free(wsconf);
+    wsconf = 0;
+  }
 
 #if 0
   // Don't do this, they're just copies
@@ -1551,36 +1558,16 @@ void Acme::ReadOrder(JsonObject &json) {
   }
 }
 
-/*
- *
- *
- */
-boolean Acme::ValidateOrder() {
-  /*
-   * This implements a model for one or more IoT devices behind a NAT firewall.
-   * We need some FTP server to store the credentials on for authorization.
-   */
-  return ValidateOrderFTP();
-
-  /*
-   * If we have globally reachable IoT devices, not behind a NAT firewall, then you would need a local
-   * web server and validate via http-01 directly.
-   * So in that case, call
-   *	ValidateOrderLocal();
-   */
-}
-
 // Store a file on an FTP server
-boolean Acme::ValidateOrderFTP() {
+boolean Acme::ValidateOrder() {
   ESP_LOGI(acme_tag, "%s", __FUNCTION__);
+  char *localfn = 0, *remotefn = 0;
 
   if (! (ftp_user && ftp_path && ftp_server && ftp_pass)) {
     ESP_LOGI(acme_tag, "%s: failed, incomplete FTP setup", __FUNCTION__);
     return false;
   }
 
-  // This uses a common (non-IoT) web server on which we can store a file. Use for cases with e.g. several IoT devices.
-  // void Acme::StoreFileOnWebserver(char *localfn, char *remotefn);
   DownloadAuthorizationResource();
 
   const char *token = 0;
@@ -1597,51 +1584,82 @@ boolean Acme::ValidateOrderFTP() {
   }
   ESP_LOGD(acme_tag, "%s: token %s", __FUNCTION__, token);
 
-  /* Store the token in a file.
-   * Notes : take a single file for two reasons : can't remove it (see below), and the file system
-   * doesn't always support file names in the format returned by an ACME server.
-   */
-  char *localfn = (char *)malloc(strlen(filename_prefix) + 15);
-  sprintf(localfn, "%s/token", filename_prefix);
+  if (webserver == 0) {
+    /*
+     * This case uses services from a "site" web server.
+     * We use FTP to store and remove files on it.
+     *
+     * Store the token in a file.
+     * Notes : take a single file for two reasons : can't remove it (see below), and the file system
+     * doesn't always support file names in the format returned by an ACME server.
+     */
+    localfn = (char *)malloc(strlen(filename_prefix) + 15);
+    sprintf(localfn, "%s/token", filename_prefix);
 
-  if (! CreateValidationFile(localfn, token)) {
-    ESP_LOGE(acme_tag, "%s: could not create local validation file %s", __FUNCTION__, localfn);
-    free(localfn);
-    return false;
+    if (! CreateValidationFile(localfn, token)) {
+      ESP_LOGE(acme_tag, "%s: could not create local validation file %s", __FUNCTION__, localfn);
+      free(localfn);
+      return false;
+    }
+
+    // FTP the file
+    remotefn = (char *)malloc(strlen(ftp_path) + strlen(well_known) + strlen(token) + 5);
+    sprintf(remotefn, "%s%s%s", ftp_path, well_known, token);
+
+    StoreFileOnWebserver(localfn, remotefn);
+  } else {
+    /*
+     * The IoT device has a local web server.
+     * Either this device is "in the wild" or firewall/router/webserver tweaks have been
+     * made so it is accessible from the Internet.
+     */
+    ValidationString = CreateValidationString(token);
+    
+    // The file name that should be queried is a short form of the above remotefn
+    ValidationFile = (char *)malloc(strlen(well_known) + strlen(token) + 2);
+    sprintf(ValidationFile, "%s%s", well_known, token);
+
+    EnableLocalWebServer();
   }
-
-  // FTP the file
-  char *remotefn = (char *)malloc(strlen(ftp_path) + strlen(token) + strlen(well_known) + 5);
-  sprintf(remotefn, "%s%s%s", ftp_path, well_known, token);
-
-  StoreFileOnWebserver(localfn, remotefn);
 
   // Alert the server
   boolean r = ValidateAlertServer();
 
   // Remove the file
-  // FIXME Can't find a API call (except when accessing SPIFFS) to remove a file in the ESP-IDF VFS layer
+  if (webserver != 0) {
+    if (r) {
+      if (ValidationString) {
+        free(ValidationString);
+        ValidationString = 0;
+      }
+      if (ValidationFile) {
+        free(ValidationFile);
+        ValidationFile = 0;
+      }
 
-/*
- * Sometimes this is too soon.
- * Leaving the challenges here makes sure we can pick this up in AcmeProcess() in case of failures,
- * only clean up on success.
- */
-  if (r) {
-    // Remove the file from FTP server
-    RemoveFileFromWebserver(remotefn);
+      DisableLocalWebServer();
+    }
+  } else {
+    /*
+     * FIXME Can't find a API call (except when accessing SPIFFS) to remove a file
+     * in the ESP-IDF VFS layer
+     *
+     * Sometimes this is too soon.
+     * Leaving the challenges here makes sure we can pick this up in AcmeProcess() in case
+     * of failures, only clean up on success.
+     */
+    if (r) {
+      // Remove the file from FTP server
+      RemoveFileFromWebserver(remotefn);
 
-    // Remove our in-memory record
-    ClearChallenge();
+      // Remove our in-memory record
+      ClearChallenge();
+    }
+
+    free(remotefn);
+    free(localfn);
   }
-
-  free(remotefn);
-  free(localfn);
   return r;
-}
-
-// We're reachable from the internet directly
-void Acme::ValidateOrderLocal() {
 }
 
 /*
@@ -1925,10 +1943,21 @@ bool Acme::CreateValidationFile(const char *localfn, const char *token) {
     return false;
   }
 
-  fprintf(tf, "%s.%s\n", token, JWSThumbprint());
+  char *tp = JWSThumbprint();
+  fprintf(tf, "%s.%s\n", token, tp);
+  free(tp);
 
   fclose(tf);
   return true;
+}
+
+// For use by the local web server
+char *Acme::CreateValidationString(const char *token) {
+  char *tp = JWSThumbprint();
+  int len = strlen(token) + strlen(tp) + 4;
+  char *r = (char *)malloc(len);
+  sprintf(r, "%s.%s\n", token, tp);
+  return r;					// Caller must free
 }
 
 void Acme::ReadChallenge(JsonObject &json) {
@@ -2490,6 +2519,15 @@ void Acme::ReadCertificate() {
   certificate = 0;
 }
 
+boolean Acme::HaveValidCertificate() {
+  if (certificate == 0)
+    return false;
+
+  // FIX ME check date ranges
+
+  return true;
+}
+
 /*
  * Convert from mbedtls_x509_time to time_t
  * FIX ME not sure if the hour is right
@@ -2588,4 +2626,49 @@ void Acme::setFtpPassword(const char *s) {
 
 void Acme::setFtpPath(const char *s) {
   ftp_path = s;
+}
+
+void Acme::setWebServer(httpd_handle_t ws) {
+  webserver = ws;
+}
+
+esp_err_t Acme::acme_http_get_handler(httpd_req_t *req) {
+  const char *TAG = "ACME httpd";
+
+  ESP_LOGI(TAG, "%s: URI %s", __FUNCTION__, req->uri);
+
+  if (strcmp(req->uri, acme->ValidationFile) == 0) {
+    // FIX ME surely requires formatting
+    httpd_resp_send(req, acme->ValidationString, strlen(acme->ValidationString));
+  } else {
+    httpd_resp_send(req, acme_http_404, strlen(acme_http_404));
+  }
+
+  return ESP_OK;
+}
+
+void Acme::EnableLocalWebServer() {
+  if (webserver == 0) {
+    ESP_LOGE(acme_tag, "%s: internal error, webserver = 0", __FUNCTION__);
+    return;
+  }
+  if (wsconf == 0) {
+    wsconf = (httpd_uri_t *)calloc(sizeof(httpd_uri_t), 0);
+  }
+  wsconf->uri = ValidationFile;
+  wsconf->method = HTTP_GET;
+  wsconf->handler = acme_http_get_handler;
+
+  httpd_register_uri_handler(webserver, wsconf);
+
+  ESP_LOGI(acme_tag, "%s(%s)", __FUNCTION__, ValidationFile);
+}
+
+void Acme::DisableLocalWebServer() {
+  if (webserver == 0 || ValidationFile == 0) {
+    ESP_LOGE(acme_tag, "%s: failed 0", __FUNCTION__);
+    return;
+  }
+  // Note this only works if ValidateFile isn't changed between invocations...
+  httpd_unregister_uri_handler(webserver, ValidationFile, HTTP_GET);
 }

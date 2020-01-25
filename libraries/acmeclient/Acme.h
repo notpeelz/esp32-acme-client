@@ -33,6 +33,8 @@
 #include <sys/socket.h>
 #include <esp_event_loop.h>
 #include <esp_http_client.h>
+#include <FtpClient.h>
+#include <esp_http_server.h>
 
 #include "mbedtls/entropy.h"
 #include "mbedtls/ctr_drbg.h"
@@ -66,8 +68,10 @@ class Acme {
     void setFtpUser(const char *);
     void setFtpPassword(const char *);
     void setFtpPath(const char *);
+    void setWebServer(httpd_handle_t);
 
     void loop(time_t now);
+    boolean HaveValidCertificate();
 
     // Private keys
     void GenerateAccountKey();
@@ -164,9 +168,12 @@ class Acme {
     constexpr static const char *acme_nonce_header = "Replay-Nonce";
     constexpr static const char *acme_location_header = "Location";
 
+    constexpr static const char *acme_http_404 = "404 File not found";
+
     // These are the static member functions
     static esp_err_t NonceHttpEvent(esp_http_client_event_t *event);
     static esp_err_t HttpEvent(esp_http_client_event_t *event);
+    static esp_err_t acme_http_get_handler(httpd_req_t *);
 
     // These store the info obtained in one of the static member functions
     void setNonce(char *);
@@ -220,12 +227,13 @@ class Acme {
     void	WriteOrderInfo();
     void	ReadOrder(JsonObject &);
     boolean	ValidateOrder();
-    boolean	ValidateOrderFTP();
-    void	ValidateOrderLocal();
     boolean	ValidateAlertServer();
+    void	EnableLocalWebServer();
+    void	DisableLocalWebServer();
 
     void	DownloadAuthorizationResource();
     bool	CreateValidationFile(const char *localfn, const char *token);
+    char	*CreateValidationString(const char *token);
     void	ReadChallenge(JsonObject &);
     boolean	ReadAuthorizationReply(JsonObject &json);
     void	ClearChallenge();
@@ -270,6 +278,12 @@ class Acme {
     mbedtls_pk_context		*certkey;	// Certificate private key
 
     mbedtls_x509_crt		*certificate;
+
+    // FTP server, if we have one
+    httpd_handle_t	webserver;
+    char		*ValidationString;	// The string to reply to the ACME server
+    char		*ValidationFile;	// File name that must be queried
+    httpd_uri_t		*wsconf;
 
     /*
      * ACME Protocol data definitions
