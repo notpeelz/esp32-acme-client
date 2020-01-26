@@ -65,6 +65,8 @@ An example with the nginx web server. You can configure it to run a secondary do
 A symbolic link to the same file must also be created in /etc/nginx/sites-enabled .
 The IP address on line 10 should be the IP address of the IoT device, and the port number (here : 80) should be where it services HTTP requests for mydomain.dyndns.me .
 
+For more information, see e.g. <a href="https://unix.stackexchange.com/questions/290223/how-to-configure-nginx-as-a-reverse-proxy-for-different-port-numbers">this</a>, or <a href="https://docs.nginx.com/nginx/admin-guide/web-server/reverse-proxy/">that</a> article.
+
 ### Web traffic forwarding
 
 ![Image](Drawing-pictures.png "drawing")
