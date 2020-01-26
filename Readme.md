@@ -8,10 +8,6 @@ using the ACME protocol.
 
 This library allows you to get certificates for IoT devices based on the ESP32.
 
-More info in
-[libraries/acmeclient/Readme.md] (https://sourceforge.net/p/esp32-acme-client/code/HEAD/tree/trunk/libraries/acmeclient/Readme.md)
-.
+More info in [ libraries/acmeclient/Readme.md ] ( <https://sourceforge.net/p/esp32-acme-client/code/HEAD/tree/trunk/libraries/acmeclient/Readme.md> ) .
 
-Specific configuration examples and technology overview is in
-[Configurations.md] (https://sourceforge.net/p/esp32-acme-client/code/HEAD/tree/trunk/libraries/acmeclient/Configurations.md)
-.
+Specific configuration examples and technology overview is in [Configurations.md] (https://sourceforge.net/p/esp32-acme-client/code/HEAD/tree/trunk/libraries/acmeclient/Configurations.md) .
