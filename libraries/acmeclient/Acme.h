@@ -96,7 +96,7 @@ class Acme {
     void ListFiles();				// Debug
 
   private:
-    const char *acme_tag = "Acme";		// For ESP_LOGx calls
+    constexpr const static char *acme_tag = "Acme";	// For ESP_LOGx calls
 
     const char *account_key_fn;			// Account private key filename
     const char *cert_key_fn;			// Certificate private key filename

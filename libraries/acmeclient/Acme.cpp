@@ -243,6 +243,9 @@ void Acme::NetworkConnected(void *ctx, system_event_t *event) {
    * - an initial nonce
    * - our account and order status
    * See if we already have a local certificate
+   *
+   * FIX ME it may be a good idea to postpone the network calls.
+   * Now we do them at each reboot...
    */
   QueryAcmeDirectory();
   RequestNewNonce();
@@ -2653,16 +2656,21 @@ void Acme::setWebServer(httpd_handle_t ws) {
   webserver = ws;
 }
 
+/*
+ * This is - intentionally - a simplistic HTTP GET handler.
+ * It just knows how to return the data that the ACME protocol requires.
+ *
+ * Other HTTP requests should be serviced by possibly more intelligent handlers
+ * in the application.
+ */
 esp_err_t Acme::acme_http_get_handler(httpd_req_t *req) {
-  const char *TAG = "ACME httpd";
-
-  ESP_LOGI(TAG, "%s: URI %s", __FUNCTION__, req->uri);
+  ESP_LOGI(acme_tag, "%s: URI %s", __FUNCTION__, req->uri);
 
   if (strcmp(req->uri, acme->ValidationFile) == 0) {
-    // FIX ME surely requires formatting
+    httpd_resp_set_type(req, "text/plain");
     httpd_resp_send(req, acme->ValidationString, strlen(acme->ValidationString));
   } else {
-    httpd_resp_send(req, acme_http_404, strlen(acme_http_404));
+    httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, acme_http_404);
   }
 
   return ESP_OK;
