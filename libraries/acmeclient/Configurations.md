@@ -50,17 +50,17 @@ This basically involves the combination of two techniques :
 
 An example with the nginx web server. You can configure it to run a secondary domain by adding a configuration file to the /etc/nginx/sites-available directory :
 
-  #
-  # Virtual Host configuration for mydomain.dyndns.me
-  #
-  server {
-          listen 80;
-          listen [::]:80;
-          server_name mydomain.dyndns.me;
-          proxy_set_header X-Real-IP $remote_addr;
-          location / {
-                  proxy_pass http://192.168.5.6:80;
-          }
+    #
+    # Virtual Host configuration for mydomain.dyndns.me
+    #
+    server {
+            listen 80;
+            listen [::]:80;
+            server_name mydomain.dyndns.me;
+            proxy_set_header X-Real-IP $remote_addr;
+            location / {
+                    proxy_pass http://192.168.5.6:80;
+            }
 
 A symbolic link to the same file must also be created in /etc/nginx/sites-enabled .
 The IP address on line 10 should be the IP address of the IoT device, and the port number (here : 80) should be where it services HTTP requests for mydomain.dyndns.me .
