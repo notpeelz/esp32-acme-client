@@ -48,7 +48,7 @@ Note that the web verification is only one of the (currently 3) options to authe
 
 Several commercial offerings exist to cheaply (sometimes at no cost) associate your domain name with a host whose address isn't stable. Your ISP probably provides this, but e.g. <a href="https://noip.com">noip.com</a> also has an interesting offering.
 
-The protocol of <a href="https://noip.com">noip.com</a> is supported in this library. This means that an IoT device can be registered with its own domain name, and you can use the module in the library to tie the domain name to its actual IP address. 
+<a href="https://www.noip.com/integrate/request">The protocol</a> of <a href="https://noip.com">noip.com</a> is supported in this library. This means that an IoT device can be registered with its own domain name, and you can use the module in the library to tie the domain name to its actual IP address. 
 
 ### NAT Firewall
 
