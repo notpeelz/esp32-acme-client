@@ -1,11 +1,6 @@
 /*
  * Web server code, to go with the standalone.cpp sample application.
  *
- * Note it is NOT RECOMMENDED to enable this functionality in a device
- * that's remotely accessible.
- *
- * This is a BLATANT SECURITY HOLE.
- *
  * This assumes that the IoT device is fully reachable over the Internet.
  *
  * Copyright (c) 2020 Danny Backx
@@ -20,7 +15,13 @@
  * CONDITIONS OF ANY KIND, either express or implied.
  */
 
-#undef	UNSECURE_I_KNOW_WHAT_I_AM_DOING
+/*
+ * Note it is NOT RECOMMENDED to enable this functionality in a device
+ * that's remotely accessible.
+ *
+ * This is a BLATANT SECURITY HOLE.
+ */
+#define	UNSECURE_I_KNOW_WHAT_I_AM_DOING
 
 #include <Arduino.h>
 #include <esp_spiffs.h>
