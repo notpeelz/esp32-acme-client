@@ -286,6 +286,7 @@ class Acme {
     char		*ValidationFile;	// File name that must be queried
     httpd_uri_t		*wsconf;
     boolean		ws_registered;
+    char		*ovf;
 
     /*
      * ACME Protocol data definitions

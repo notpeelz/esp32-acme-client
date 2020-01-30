@@ -82,6 +82,7 @@ Acme::Acme() {
 
   webserver = 0;
   ws_registered = false;
+  ovf = 0;
 
   accountkey = 0;
   certkey = 0;
@@ -2680,13 +2681,15 @@ void Acme::EnableLocalWebServer() {
     return;
   }
 
-  if (ws_registered) {
-    // FIX ME should be old ValidationFile
-    httpd_unregister_uri_handler(webserver, ValidationFile, HTTP_GET);
+  if (ws_registered && (ovf != NULL)) {
+    // old ValidationFile
+    httpd_unregister_uri_handler(webserver, ovf, HTTP_GET);
+    free(ovf);
+    ovf = NULL;
   }
 
-  wsconf.uri = ValidationFile;
   // wsconf.uri = "/.well-known/acme-challenge/*";
+  wsconf.uri = ValidationFile;
   wsconf.method = HTTP_GET;
   wsconf.handler = acme_http_get_handler;
 
@@ -2696,6 +2699,7 @@ void Acme::EnableLocalWebServer() {
   } else {
     ESP_LOGI(acme_tag, "%s(%s)", __FUNCTION__, wsconf.uri);
     ws_registered = true;
+    ovf = strdup(wsconf.uri);
   }
 }
 
