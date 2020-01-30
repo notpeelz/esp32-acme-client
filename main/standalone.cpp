@@ -84,6 +84,20 @@ void setup(void) {
     ESP_LOGE(acmeclient_tag, "Failed to register SPIFFS %s (%d)", esp_err_to_name(err), err);
   }
 
+#if 0
+  /*
+   * Enabling this code forces the certificate to be renewed, even if it's still very valid.
+   */
+  if (unlink("/spiffs/order.json") < 0)
+    ESP_LOGE(acmeclient_tag, "Could not unlink /spiffs/order.json");
+  else
+    ESP_LOGI(acmeclient_tag, "Removed /spiffs/order.json");
+  if (unlink("/spiffs/certificate.pem") < 0)
+    ESP_LOGE(acmeclient_tag, "Could not unlink /spiffs/certificate.pem");
+  else
+    ESP_LOGI(acmeclient_tag, "Removed /spiffs/certificate.pem");
+#endif
+
   /*
    * Set up the time
    *
