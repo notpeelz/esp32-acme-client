@@ -81,7 +81,7 @@ Acme::Acme() {
   ftp_path = 0;
 
   webserver = 0;
-  wsconf = 0;
+  ws_registered = false;
 
   accountkey = 0;
   certkey = 0;
@@ -150,11 +150,6 @@ Acme::~Acme() {
   entropy = 0;
   free(ctr_drbg);
   ctr_drbg = 0;
-
-  if (wsconf) {
-    free(wsconf);
-    wsconf = 0;
-  }
 
 #if 0
   // Don't do this, they're just copies
@@ -2664,12 +2659,12 @@ void Acme::setWebServer(httpd_handle_t ws) {
  * in the application.
  */
 esp_err_t Acme::acme_http_get_handler(httpd_req_t *req) {
-  ESP_LOGI(acme_tag, "%s: URI %s", __FUNCTION__, req->uri);
-
   if (strcmp(req->uri, acme->ValidationFile) == 0) {
+    ESP_LOGI(acme_tag, "%s: URI %s", __FUNCTION__, req->uri);
     httpd_resp_set_type(req, "text/plain");
     httpd_resp_send(req, acme->ValidationString, strlen(acme->ValidationString));
   } else {
+    ESP_LOGE(acme_tag, "%s: URI %s -> 404", __FUNCTION__, req->uri);
     httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, acme_http_404);
   }
 
@@ -2677,20 +2672,31 @@ esp_err_t Acme::acme_http_get_handler(httpd_req_t *req) {
 }
 
 void Acme::EnableLocalWebServer() {
+  httpd_uri_t	wsconf;
+  esp_err_t	err;
+
   if (webserver == 0) {
     ESP_LOGE(acme_tag, "%s: internal error, webserver = 0", __FUNCTION__);
     return;
   }
-  if (wsconf == 0) {
-    wsconf = (httpd_uri_t *)calloc(sizeof(httpd_uri_t), 0);
+
+  if (ws_registered) {
+    // FIX ME should be old ValidationFile
+    httpd_unregister_uri_handler(webserver, ValidationFile, HTTP_GET);
   }
-  wsconf->uri = ValidationFile;
-  wsconf->method = HTTP_GET;
-  wsconf->handler = acme_http_get_handler;
 
-  httpd_register_uri_handler(webserver, wsconf);
+  wsconf.uri = ValidationFile;
+  // wsconf.uri = "/.well-known/acme-challenge/*";
+  wsconf.method = HTTP_GET;
+  wsconf.handler = acme_http_get_handler;
 
-  ESP_LOGI(acme_tag, "%s(%s)", __FUNCTION__, ValidationFile);
+  if ((err = httpd_register_uri_handler(webserver, &wsconf)) != ESP_OK) {
+    ESP_LOGE(acme_tag, "%s : failed to register URI handler for %s (%d %s)",
+      __FUNCTION__, wsconf.uri, err, esp_err_to_name(err));
+  } else {
+    ESP_LOGI(acme_tag, "%s(%s)", __FUNCTION__, wsconf.uri);
+    ws_registered = true;
+  }
 }
 
 void Acme::DisableLocalWebServer() {

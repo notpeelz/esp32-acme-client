@@ -285,6 +285,7 @@ class Acme {
     char		*ValidationString;	// The string to reply to the ACME server
     char		*ValidationFile;	// File name that must be queried
     httpd_uri_t		*wsconf;
+    boolean		ws_registered;
 
     /*
      * ACME Protocol data definitions

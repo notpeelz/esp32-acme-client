@@ -265,6 +265,8 @@ esp_err_t upload_post_handler(httpd_req_t *req) {
 #endif
 
 void StartWebServer(void) {
+  esp_err_t	err;
+
   ESP_LOGI(ws_tag, "Starting web server ...");
 
   httpd_uri_t wsconf;
@@ -278,17 +280,29 @@ void StartWebServer(void) {
 
   if (httpd_start(&webserver, &wsconfig) == ESP_OK) {
     wsconf.uri = "/*.html";
-    httpd_register_uri_handler(webserver, &wsconf);
+    if ((err = httpd_register_uri_handler(webserver, &wsconf)) != ESP_OK) {
+      ESP_LOGE(ws_tag, "%s: failed to register %s (%d %s)", __FUNCTION__, wsconf.uri,
+        err, esp_err_to_name(err));
+    }
     wsconf.uri = "/*.ico";
-    httpd_register_uri_handler(webserver, &wsconf);
+    if ((err = httpd_register_uri_handler(webserver, &wsconf)) != ESP_OK) {
+      ESP_LOGE(ws_tag, "%s: failed to register %s (%d %s)", __FUNCTION__, wsconf.uri,
+        err, esp_err_to_name(err));
+    }
 
 #ifdef	UNSECURE_I_KNOW_WHAT_I_AM_DOING
     wsconf.uri = "/spiffs/*";
-    httpd_register_uri_handler(webserver, &wsconf);
+    if ((err = httpd_register_uri_handler(webserver, &wsconf)) != ESP_OK) {
+      ESP_LOGE(ws_tag, "%s: failed to register %s (%d %s)", __FUNCTION__, wsconf.uri,
+        err, esp_err_to_name(err));
+    }
 
     wsconf.uri = "/upload/*";
     wsconf.method = HTTP_POST;
-    httpd_register_uri_handler(webserver, &wsconf);
+    if ((err = httpd_register_uri_handler(webserver, &wsconf)) != ESP_OK) {
+      ESP_LOGE(ws_tag, "%s: failed to register %s (%d %s)", __FUNCTION__, wsconf.uri,
+        err, esp_err_to_name(err));
+    }
 #endif
     acme->setWebServer(webserver);
     return;

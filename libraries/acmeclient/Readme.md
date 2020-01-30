@@ -11,16 +11,16 @@ This library allows you to get certificates for IoT devices based on the ESP32.
 Currently, I've chosen to implement this for devices behind a NAT firewall.
 One of the ways in which you can allow an ACME server to validate that you're asking a certificate for
 a website/device that you actually have control over, is the use of a web server.
-The choice here is that you can do with one central web server on your site, if you allow the IoT devices
-to put temporary files there to validate theirselves against the ACME server.
-
-Any secured Linux box on which you provide access to its web server can easily be set up in this way.
+There are two options here :
+- you can do with one central web server on your site, if you allow the IoT devices to put temporary files there to validate theirselves against the ACME server. Any secured Linux box on which you provide access to its web server can easily be set up in this way.
+- you can implement a web server in the IoT device directly (if you can spare the resources).
 
 This is unfinished software. Current status and plans :
 - (done) works as a part of my app against the staging server
 - (done) polish up the API so it can be a library
 - (done) run against the production server
 - (done, on staging) renew certificate (I have three months to get there)
+- (done, on staging) implement a local web server, authorize against that directly
 
 Build notes :
 - you may have to augment default stack sizes such as
