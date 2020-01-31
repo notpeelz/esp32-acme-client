@@ -15,12 +15,13 @@ There are two options here :
 - you can do with one central web server on your site, if you allow the IoT devices to put temporary files there to validate theirselves against the ACME server. Any secured Linux box on which you provide access to its web server can easily be set up in this way.
 - you can implement a web server in the IoT device directly (if you can spare the resources).
 
-This is unfinished software. Current status and plans :
+Current status and plans :
 - (done) works as a part of my app against the staging server
 - (done) polish up the API so it can be a library
 - (done) run against the production server
 - (done, on staging) renew certificate (I have three months to get there)
 - (done, on staging) implement a local web server, authorize against that directly
+- (done, on production) implement a local web server, authorize against that directly
 
 Build notes :
 - you may have to augment default stack sizes such as
@@ -90,6 +91,6 @@ API :
     void setAccountKey(mbedtls_pk_context *ak);
     void setCertificateKey(mbedtls_pk_context *ck);
 
-This class relies modules provided with ESP-IDF :
+This class relies on modules provided with ESP-IDF :
 - mbedtls
 - vfs (filesystem access, and underlying SPIFFS)
