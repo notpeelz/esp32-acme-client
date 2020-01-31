@@ -21,7 +21,7 @@
  *
  * This is a BLATANT SECURITY HOLE.
  */
-#define	UNSECURE_I_KNOW_WHAT_I_AM_DOING
+#undef	UNSECURE_I_KNOW_WHAT_I_AM_DOING
 
 #include <Arduino.h>
 #include <esp_spiffs.h>

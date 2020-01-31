@@ -387,6 +387,9 @@ void Acme::AcmeProcess() {
       WriteOrderInfo();
     }
 
+    if (ws_registered)
+      DisableLocalWebServer();
+
     free(order->status);
     order->status = strdup(acme_status_downloaded);		// an additional status
     WriteOrderInfo();
@@ -395,6 +398,10 @@ void Acme::AcmeProcess() {
     // Something went wrong with this order, need to restart a new order
     RequestNewOrder(acme_url);
     WriteOrderInfo();
+
+    if (ws_registered)
+      DisableLocalWebServer();
+
     return;
   }
 }
@@ -1636,7 +1643,8 @@ boolean Acme::ValidateOrder() {
         ValidationFile = 0;
       }
 
-      DisableLocalWebServer();
+      if (ws_registered)
+        DisableLocalWebServer();
     }
   } else {
     /*
@@ -1754,6 +1762,9 @@ void Acme::DownloadCertificate() {
     ESP_LOGE(acme_tag, "Could not open %s to write certificate, error %d (%s)", fn, errno, strerror(errno));
   }
   free(reply);
+
+  if (ws_registered)
+    DisableLocalWebServer();
 
   ReadCertificate();
 }
@@ -2704,10 +2715,16 @@ void Acme::EnableLocalWebServer() {
 }
 
 void Acme::DisableLocalWebServer() {
-  if (webserver == 0 || ValidationFile == 0) {
+  if (webserver == 0 || ovf == 0 || !ws_registered) {
     ESP_LOGE(acme_tag, "%s: failed 0", __FUNCTION__);
     return;
   }
+
   // Note this only works if ValidateFile isn't changed between invocations...
-  httpd_unregister_uri_handler(webserver, ValidationFile, HTTP_GET);
+  httpd_unregister_uri_handler(webserver, ovf, HTTP_GET);
+  free(ovf);
+  ovf = NULL;
+  ws_registered = false;
+
+  ESP_LOGI(acme_tag, "%s: disabled local web server", __FUNCTION__);
 }

@@ -61,6 +61,13 @@ Acme		*acme = 0;
 time_t		nowts, boot_time;
 boolean		wifi_up = false;
 
+static void RemoveFile(const char *fn) {
+  if (unlink(fn) < 0)
+    ESP_LOGE(acmeclient_tag, "Could not unlink %s", fn);
+  else
+    ESP_LOGI(acmeclient_tag, "Removed %s", fn);
+}
+
 // Initial function
 void setup(void) {
   esp_err_t err;
@@ -88,14 +95,9 @@ void setup(void) {
   /*
    * Enabling this code forces the certificate to be renewed, even if it's still very valid.
    */
-  if (unlink("/spiffs/order.json") < 0)
-    ESP_LOGE(acmeclient_tag, "Could not unlink /spiffs/order.json");
-  else
-    ESP_LOGI(acmeclient_tag, "Removed /spiffs/order.json");
-  if (unlink("/spiffs/certificate.pem") < 0)
-    ESP_LOGE(acmeclient_tag, "Could not unlink /spiffs/certificate.pem");
-  else
-    ESP_LOGI(acmeclient_tag, "Removed /spiffs/certificate.pem");
+  RemoveFile("/spiffs/account.json");
+  RemoveFile("/spiffs/order.json");
+  RemoveFile("/spiffs/certificate.pem");
 #endif
 
   /*
