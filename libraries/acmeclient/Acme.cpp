@@ -1012,7 +1012,10 @@ boolean Acme::RequestNewAccount(const char *contact, boolean onlyExisting) {
   }
 
   if (contact) {	// email address is included
-    payload = (char *)malloc(strlen(new_account_template) + strlen(contact) + 10);
+    if (strncasecmp(contact, "mailto:", 7) == 0)
+      payload = (char *)malloc(strlen(new_account_template) + strlen(contact) + 10);
+    else
+      payload = (char *)malloc(strlen(new_account_template_mailto) + strlen(contact) + 10);
     sprintf(payload, new_account_template, contact, onlyExisting ? "true" : "false");
     ESP_LOGD(acme_tag, "%s(%s) msg %s", __FUNCTION__, contact, payload);
   } else {

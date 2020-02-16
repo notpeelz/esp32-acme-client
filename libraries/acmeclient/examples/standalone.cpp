@@ -116,10 +116,12 @@ void setup(void) {
   acme->setUrl(SECRET_URL);
   acme->setEmail(SECRET_EMAIL);
 
+#if defined(SECRET_FTP_SERVER)
   acme->setFtpServer(SECRET_FTP_SERVER);
   acme->setFtpPath(SECRET_FTP_PATH);
   acme->setFtpUser(SECRET_FTP_USER);
   acme->setFtpPassword(SECRET_FTP_PASS);
+#endif
 
   acme->setAccountFilename("account.json");
   acme->setOrderFilename("order.json");

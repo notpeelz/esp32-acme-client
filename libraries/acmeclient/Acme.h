@@ -156,6 +156,8 @@ class Acme {
     const char *acme_jwk_template = "{\"kty\": \"RSA\", \"n\": \"%s\", \"e\": \"%s\"}";
     const char *new_account_template =
       "{\n  \"termsOfServiceAgreed\": true,\n  \"contact\": [\n    \"%s\"\n  ],\n  \"onlyReturnExisting\": %s\n}";
+    const char *new_account_template_mailto =
+      "{ \"termsOfServiceAgreed\": true, \"contact\": [ \"mailto:%s\" ],  \"onlyReturnExisting\": %s}";
     const char *new_account_template_no_email =
       "{\n  \"termsOfServiceAgreed\": true,\n  \"resource\": [\n    \"new-reg\"\n  ]\n}";
     const char *new_order_template =
