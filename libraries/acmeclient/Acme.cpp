@@ -1063,7 +1063,8 @@ boolean Acme::RequestNewAccount(const char *contact, boolean onlyExisting) {
     free(reply);
     return false;
   } else if (reply_status == 0) {
-    ESP_LOGE(acme_tag, "%s: null reply_status", __FUNCTION__);
+    // ESP_LOGE(acme_tag, "%s: null reply_status", __FUNCTION__);
+    ESP_LOGE(acme_tag, "%s: null reply_status (reply %s)", __FUNCTION__, reply);
   } else {
     ESP_LOGI(acme_tag, "%s: reply_status '%s'", __FUNCTION__, reply_status);
   }
@@ -1319,6 +1320,7 @@ void Acme::WriteAccountInfo() {
  */
 void Acme::RequestNewOrder(const char *url) {
   ClearOrderContent();
+  ClearChallenge();
   ESP_LOGI(acme_tag, "%s (%s)", __FUNCTION__, url);
   /*
    * prot :
@@ -1378,7 +1380,8 @@ void Acme::RequestNewOrder(const char *url) {
     free(reply);
     return;
   } else if (reply_status == 0) {
-    ESP_LOGE(acme_tag, "%s: null reply_status", __FUNCTION__);
+    // ESP_LOGE(acme_tag, "%s: null reply_status", __FUNCTION__);
+    ESP_LOGE(acme_tag, "%s: null reply_status (reply %s)", __FUNCTION__, reply);
   } else {
     ESP_LOGE(acme_tag, "%s: reply_status %s", __FUNCTION__, reply_status);
   }
@@ -1569,11 +1572,6 @@ boolean Acme::ValidateOrder() {
   ESP_LOGI(acme_tag, "%s", __FUNCTION__);
   char *localfn = 0, *remotefn = 0;
 
-  if (! (ftp_user && ftp_path && ftp_server && ftp_pass)) {
-    ESP_LOGI(acme_tag, "%s: failed, incomplete FTP setup", __FUNCTION__);
-    return false;
-  }
-
   DownloadAuthorizationResource();
 
   const char *token = 0;
@@ -1591,6 +1589,11 @@ boolean Acme::ValidateOrder() {
   ESP_LOGD(acme_tag, "%s: token %s", __FUNCTION__, token);
 
   if (webserver == 0) {
+    if (! (ftp_user && ftp_path && ftp_server && ftp_pass)) {
+      ESP_LOGI(acme_tag, "%s: failed, incomplete FTP setup", __FUNCTION__);
+      return false;
+    }
+
     /*
      * This case uses services from a "site" web server.
      * We use FTP to store and remove files on it.
@@ -1714,7 +1717,8 @@ boolean Acme::ValidateAlertServer() {
     free(reply);
     return false;
   } else if (reply_status == 0) {
-    ESP_LOGE(acme_tag, "%s: null reply_status", __FUNCTION__);
+    // ESP_LOGE(acme_tag, "%s: null reply_status", __FUNCTION__);
+    ESP_LOGE(acme_tag, "%s: null reply_status (reply %s)", __FUNCTION__, reply);
   } else {
     ESP_LOGI(acme_tag, "%s: reply_status %s", __FUNCTION__, reply_status);
   }
@@ -1868,7 +1872,8 @@ void Acme::DownloadAuthorizationResource() {
     free(reply);
     return;
   } else if (reply_status == 0) {
-    ESP_LOGE(acme_tag, "%s: null reply_status", __FUNCTION__);
+    // ESP_LOGE(acme_tag, "%s: null reply_status", __FUNCTION__);
+    ESP_LOGE(acme_tag, "%s: null reply_status (reply %s)", __FUNCTION__, reply);
   } else {
     ESP_LOGD(acme_tag, "%s: reply_status %s", __FUNCTION__, reply_status);
   }
@@ -2460,7 +2465,8 @@ void Acme::FinalizeOrder() {
     free(reply);
     return;
   } else if (reply_status == 0) {
-    ESP_LOGE(acme_tag, "%s: null reply_status", __FUNCTION__);
+    // ESP_LOGE(acme_tag, "%s: null reply_status", __FUNCTION__);
+    ESP_LOGE(acme_tag, "%s: null reply_status (reply %s)", __FUNCTION__, reply);
   } else {
     ESP_LOGD(acme_tag, "%s: reply_status %s", __FUNCTION__, reply_status);
   }
