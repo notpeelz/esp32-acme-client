@@ -229,7 +229,7 @@ void Acme::setCertificateKey(mbedtls_pk_context *ck) {
  * These use the esp-idf API for such functions.
  */
 void Acme::NetworkConnected(void *ctx, system_event_t *event) {
-  ESP_LOGI(acme_tag, "%s", __FUNCTION__);
+  ESP_LOGD(acme_tag, "%s", __FUNCTION__);
 
   connected = true;
 
@@ -1012,12 +1012,20 @@ boolean Acme::RequestNewAccount(const char *contact, boolean onlyExisting) {
   }
 
   if (contact) {	// email address is included
-    if (strncasecmp(contact, "mailto:", 7) == 0)
-      payload = (char *)malloc(strlen(new_account_template) + strlen(contact) + 10);
-    else
-      payload = (char *)malloc(strlen(new_account_template_mailto) + strlen(contact) + 10);
-    sprintf(payload, new_account_template, contact, onlyExisting ? "true" : "false");
-    ESP_LOGD(acme_tag, "%s(%s) msg %s", __FUNCTION__, contact, payload);
+    // Check whether it starts with "mailto:"
+    boolean add_mailto = (strncasecmp(contact, acme_mailto, strlen(acme_mailto)) != 0);
+
+    // Allocate just enough. The 10 is for small stuff + the onlyExisting boolean.
+    int len = strlen(new_account_template) + strlen(contact) + 10;
+    if (add_mailto)
+      len += strlen(acme_mailto);
+    payload = (char *)malloc(len);
+
+    // Create message
+    sprintf(payload, new_account_template,
+      add_mailto ? acme_mailto : "", contact,
+      onlyExisting ? "true" : "false");
+    ESP_LOGI(acme_tag, "%s(%s) msg %s", __FUNCTION__, contact, payload);
   } else {
     payload = strdup(new_account_template_no_email);
     ESP_LOGD(acme_tag, "%s(NULL) msg %s", __FUNCTION__, payload);
