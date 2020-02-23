@@ -1025,7 +1025,7 @@ boolean Acme::RequestNewAccount(const char *contact, boolean onlyExisting) {
     sprintf(payload, new_account_template,
       add_mailto ? acme_mailto : "", contact,
       onlyExisting ? "true" : "false");
-    ESP_LOGI(acme_tag, "%s(%s) msg %s", __FUNCTION__, contact, payload);
+    ESP_LOGD(acme_tag, "%s(%s) msg %s", __FUNCTION__, contact, payload);
   } else {
     payload = strdup(new_account_template_no_email);
     ESP_LOGD(acme_tag, "%s(NULL) msg %s", __FUNCTION__, payload);
