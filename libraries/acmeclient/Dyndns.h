@@ -27,30 +27,43 @@
 #include <esp_http_client.h>
 #include <esp_event_loop.h>
 
+enum dyndns_provider {
+ DD_UNKNOWN,
+ DD_NOIP,
+ DD_CLOUDNS
+};
+
 class Dyndns {
 public:
   Dyndns();
+  Dyndns(dyndns_provider);
   ~Dyndns();
   boolean update();
   void setHostname(const char *);
   void setAddress(const char *);
   void setAuth(const char *);
-  void setUrl(const char *);
 
 private:
   esp_http_client_handle_t	http_client;
   esp_http_client_config_t	http_config;
 
   char				*hostname, *ip, *auth;
-  char				*url;
+  dyndns_provider		provider;
+  char				*buf;
 
-  const char *get_template1 =	"http://%s/nic/update?hostname=%s";
-  const char *get_template2 =	"http://%s/nic/update?hostname=%s&myip=%s";
+  // NoIP
+  const char *get_template1 =	"http://dynupdate.no-ip.com/nic/update?hostname=%s";
+  const char *get_template2 =	"http://dynupdate.no-ip.com/nic/update?hostname=%s&myip=%s";
+  // cloudns
+  const char *get_template3 =	"http://ipv4.cloudns.net/api/dynamicURL/?q=%s";
+
   const char *hdr_header =	"Authorization";
   const char *hdr_template =	"Basic %s";
 
   const char *dyndns_tag =	"dyndns";
+
+  static esp_err_t _http_event_handler(esp_http_client_event_t *);
 };
 
-esp_err_t _http_event_handler(esp_http_client_event_t *);
+extern Dyndns *dyndns;
 #endif

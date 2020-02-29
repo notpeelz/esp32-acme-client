@@ -49,13 +49,26 @@
 #include <Arduino.h>
 #include "Dyndns.h"
 
-Dyndns::Dyndns() {
-  url = (char *)"dynupdate.no-ip.com";		// Default, can be overruled by method
+Dyndns *dyndns;
 
+Dyndns::Dyndns() {
   memset(&http_config, 0, sizeof(http_config));
   http_config.event_handler = _http_event_handler;
 
-  hostname = ip = auth = 0;
+  hostname = ip = auth = buf = 0;
+  provider = DD_UNKNOWN;
+
+  dyndns = this;
+}
+
+Dyndns::Dyndns(dyndns_provider p) {
+  memset(&http_config, 0, sizeof(http_config));
+  http_config.event_handler = _http_event_handler;
+
+  hostname = ip = auth = buf = 0;
+  provider = p;
+
+  dyndns = this;
 }
 
 Dyndns::~Dyndns() {
@@ -73,19 +86,25 @@ void Dyndns::setAuth(const char *auth) {
   this->auth = (char *)auth;
 }
 
-void Dyndns::setUrl(const char *url) {
-  this->url = (char *)url;
-}
-
 boolean Dyndns::update() {
-  char *query, *header;
+  char *query, *header = 0;
   int len;
   boolean ok = false;
 
-  if (ip != 0)
-    len = strlen(get_template2) + strlen(url) + strlen(hostname) + strlen(ip) + 5;
-  else
-    len = strlen(get_template1) + strlen(url) + strlen(hostname) + 5;
+  if (provider == DD_NOIP) {
+    if (ip != 0)
+      len = strlen(get_template2) + strlen(hostname) + strlen(ip) + 5;
+    else
+      len = strlen(get_template1) + strlen(hostname) + 5;
+
+    header = (char *)malloc(strlen(hdr_template) + strlen(auth) + 5);
+    sprintf(header, hdr_template, auth);
+  } else if (provider == DD_CLOUDNS) {
+    len = strlen(get_template3) + strlen(auth) + 5;
+  } else {	// DD_UNKNOWN
+    ESP_LOGE(dyndns_tag, "%s(DD_UNKNOWN), aborting", __FUNCTION__);
+    return false;
+  }
 
   query = (char *)malloc(len);
   if (query == 0) {
@@ -93,15 +112,15 @@ boolean Dyndns::update() {
     return false;
   }
 
-  if (ip != 0)
-    sprintf(query, get_template2, url, hostname, ip);
-  else
-    sprintf(query, get_template1, url, hostname);
+  if (provider == DD_NOIP) {
+    if (ip != 0)
+      sprintf(query, get_template2, hostname, ip);
+    else
+      sprintf(query, get_template1, hostname);
+  } else if (provider == DD_CLOUDNS) {
+      sprintf(query, get_template3, auth);
+  }
   ESP_LOGI(dyndns_tag, "Query %s", query);
-
-  //
-  header = (char *)malloc(strlen(hdr_template) + strlen(auth) + 5);
-  sprintf(header, hdr_template, auth);
 
   // Do it
   http_config.url = query;
@@ -111,12 +130,15 @@ boolean Dyndns::update() {
     free(query);
     return false;
   }
-  esp_http_client_set_header(http_client, hdr_header, header);
+  if (provider == DD_NOIP)
+    esp_http_client_set_header(http_client, hdr_header, header);
+  if (provider == DD_CLOUDNS)
+    buf = (char *)malloc(80);
 
   // GET
   esp_err_t err = esp_http_client_perform(http_client);
   if (err == ESP_OK) {
-    ESP_LOGD(dyndns_tag, "HTTP GET Status = %d, content_length = %d",
+    ESP_LOGI(dyndns_tag, "HTTP GET Status = %d, content_length = %d",
       esp_http_client_get_status_code(http_client),
       esp_http_client_get_content_length(http_client));
     ok = true;
@@ -124,12 +146,25 @@ boolean Dyndns::update() {
     ESP_LOGE(dyndns_tag, "HTTP GET request failed: %s", esp_err_to_name(err));
   }
 
-  free(query); free(header);
+  if (provider == DD_CLOUDNS) {
+    // Thanks to esp_http_client_perform(), data read is already in this->buf
+    ESP_LOGI(dyndns_tag, "received {%s}", buf);
+
+    ok = (strncmp(buf, "OK", 2) == 0);
+  }
+
+  free(query);
+  if (header)
+    free(header);
+  if (buf) {
+    free(buf);
+    buf = 0;
+  }
   esp_http_client_cleanup(http_client);
 
   return ok;
 
-#if 0
+#if 1
   if (err == 0) {
     ESP_LOGI(dyndns_tag, "Success ");
   } else if (err == 0) {
@@ -143,34 +178,32 @@ boolean Dyndns::update() {
 
 static const char *sdyndns_tag = "static dyndns";
 
-esp_err_t _http_event_handler(esp_http_client_event_t *evt)
+esp_err_t Dyndns::_http_event_handler(esp_http_client_event_t *evt)
 {
     switch(evt->event_id) {
         case HTTP_EVENT_ERROR:
-            ESP_LOGD(sdyndns_tag, "HTTP_EVENT_ERROR");
+            ESP_LOGI(sdyndns_tag, "HTTP_EVENT_ERROR");
             break;
         case HTTP_EVENT_ON_CONNECTED:
-            ESP_LOGD(sdyndns_tag, "HTTP_EVENT_ON_CONNECTED");
+            ESP_LOGI(sdyndns_tag, "HTTP_EVENT_ON_CONNECTED");
             break;
         case HTTP_EVENT_HEADER_SENT:
-            ESP_LOGD(sdyndns_tag, "HTTP_EVENT_HEADER_SENT");
+            ESP_LOGI(sdyndns_tag, "HTTP_EVENT_HEADER_SENT");
             break;
         case HTTP_EVENT_ON_HEADER:
-            ESP_LOGD(sdyndns_tag, "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
+            ESP_LOGI(sdyndns_tag, "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
             break;
         case HTTP_EVENT_ON_DATA:
-            ESP_LOGD(sdyndns_tag, "HTTP_EVENT_ON_DATA, len=%d", evt->data_len);
-            if (!esp_http_client_is_chunked_response(evt->client)) {
-                // Write out data
-                // printf("%.*s", evt->data_len, (char*)evt->data);
-            }
+	    strncpy(dyndns->buf, (const char *)evt->data, evt->data_len);
+	    dyndns->buf[evt->data_len] = 0;
+            ESP_LOGI(sdyndns_tag, "HTTP_EVENT_ON_DATA, len=%d, {%s}", evt->data_len, dyndns->buf);
 
             break;
         case HTTP_EVENT_ON_FINISH:
-            ESP_LOGD(sdyndns_tag, "HTTP_EVENT_ON_FINISH");
+            ESP_LOGI(sdyndns_tag, "HTTP_EVENT_ON_FINISH");
             break;
         case HTTP_EVENT_DISCONNECTED:
-            ESP_LOGD(sdyndns_tag, "HTTP_EVENT_DISCONNECTED");
+            ESP_LOGI(sdyndns_tag, "HTTP_EVENT_DISCONNECTED");
             break;
     }
     return ESP_OK;
