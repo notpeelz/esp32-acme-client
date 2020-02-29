@@ -49,7 +49,7 @@
 #include <Arduino.h>
 #include "Dyndns.h"
 
-Dyndns *dyndns;
+Dyndns *__dyndns;
 
 Dyndns::Dyndns() {
   memset(&http_config, 0, sizeof(http_config));
@@ -58,7 +58,7 @@ Dyndns::Dyndns() {
   hostname = ip = auth = buf = 0;
   provider = DD_UNKNOWN;
 
-  dyndns = this;
+  __dyndns = this;
 }
 
 Dyndns::Dyndns(dyndns_provider p) {
@@ -68,7 +68,7 @@ Dyndns::Dyndns(dyndns_provider p) {
   hostname = ip = auth = buf = 0;
   provider = p;
 
-  dyndns = this;
+  __dyndns = this;
 }
 
 Dyndns::~Dyndns() {
@@ -194,9 +194,9 @@ esp_err_t Dyndns::_http_event_handler(esp_http_client_event_t *evt)
             ESP_LOGD(sdyndns_tag, "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
             break;
         case HTTP_EVENT_ON_DATA:
-	    strncpy(dyndns->buf, (const char *)evt->data, evt->data_len);
-	    dyndns->buf[evt->data_len] = 0;
-            ESP_LOGD(sdyndns_tag, "HTTP_EVENT_ON_DATA, len=%d, {%s}", evt->data_len, dyndns->buf);
+	    strncpy(__dyndns->buf, (const char *)evt->data, evt->data_len);
+	    __dyndns->buf[evt->data_len] = 0;
+            ESP_LOGD(sdyndns_tag, "HTTP_EVENT_ON_DATA, len=%d, {%s}", evt->data_len, __dyndns->buf);
 
             break;
         case HTTP_EVENT_ON_FINISH:
