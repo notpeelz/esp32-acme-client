@@ -120,7 +120,7 @@ boolean Dyndns::update() {
   } else if (provider == DD_CLOUDNS) {
       sprintf(query, get_template3, auth);
   }
-  ESP_LOGI(dyndns_tag, "Query %s", query);
+  ESP_LOGD(dyndns_tag, "Query %s", query);
 
   // Do it
   http_config.url = query;
@@ -138,7 +138,7 @@ boolean Dyndns::update() {
   // GET
   esp_err_t err = esp_http_client_perform(http_client);
   if (err == ESP_OK) {
-    ESP_LOGI(dyndns_tag, "HTTP GET Status = %d, content_length = %d",
+    ESP_LOGD(dyndns_tag, "HTTP GET Status = %d, content_length = %d",
       esp_http_client_get_status_code(http_client),
       esp_http_client_get_content_length(http_client));
     ok = true;
@@ -148,7 +148,7 @@ boolean Dyndns::update() {
 
   if (provider == DD_CLOUDNS) {
     // Thanks to esp_http_client_perform(), data read is already in this->buf
-    ESP_LOGI(dyndns_tag, "received {%s}", buf);
+    ESP_LOGD(dyndns_tag, "received {%s}", buf);
 
     ok = (strncmp(buf, "OK", 2) == 0);
   }
@@ -164,7 +164,7 @@ boolean Dyndns::update() {
 
   return ok;
 
-#if 1
+#if 0
   if (err == 0) {
     ESP_LOGI(dyndns_tag, "Success ");
   } else if (err == 0) {
@@ -182,28 +182,28 @@ esp_err_t Dyndns::_http_event_handler(esp_http_client_event_t *evt)
 {
     switch(evt->event_id) {
         case HTTP_EVENT_ERROR:
-            ESP_LOGI(sdyndns_tag, "HTTP_EVENT_ERROR");
+            ESP_LOGD(sdyndns_tag, "HTTP_EVENT_ERROR");
             break;
         case HTTP_EVENT_ON_CONNECTED:
-            ESP_LOGI(sdyndns_tag, "HTTP_EVENT_ON_CONNECTED");
+            ESP_LOGD(sdyndns_tag, "HTTP_EVENT_ON_CONNECTED");
             break;
         case HTTP_EVENT_HEADER_SENT:
-            ESP_LOGI(sdyndns_tag, "HTTP_EVENT_HEADER_SENT");
+            ESP_LOGD(sdyndns_tag, "HTTP_EVENT_HEADER_SENT");
             break;
         case HTTP_EVENT_ON_HEADER:
-            ESP_LOGI(sdyndns_tag, "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
+            ESP_LOGD(sdyndns_tag, "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
             break;
         case HTTP_EVENT_ON_DATA:
 	    strncpy(dyndns->buf, (const char *)evt->data, evt->data_len);
 	    dyndns->buf[evt->data_len] = 0;
-            ESP_LOGI(sdyndns_tag, "HTTP_EVENT_ON_DATA, len=%d, {%s}", evt->data_len, dyndns->buf);
+            ESP_LOGD(sdyndns_tag, "HTTP_EVENT_ON_DATA, len=%d, {%s}", evt->data_len, dyndns->buf);
 
             break;
         case HTTP_EVENT_ON_FINISH:
-            ESP_LOGI(sdyndns_tag, "HTTP_EVENT_ON_FINISH");
+            ESP_LOGD(sdyndns_tag, "HTTP_EVENT_ON_FINISH");
             break;
         case HTTP_EVENT_DISCONNECTED:
-            ESP_LOGI(sdyndns_tag, "HTTP_EVENT_DISCONNECTED");
+            ESP_LOGD(sdyndns_tag, "HTTP_EVENT_DISCONNECTED");
             break;
     }
     return ESP_OK;
