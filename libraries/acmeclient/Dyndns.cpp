@@ -1,4 +1,7 @@
 /*
+ * Send periodic updates to a DynDNS provider.
+ * Currently supported : noip.com , cloudns.net .
+ *
  * Copyright (c) 2016, 2017, 2020 Danny Backx
  *
  * License (MIT license):
@@ -19,6 +22,10 @@
  *   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  *   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  *   THE SOFTWARE.
+ *
+ */
+/*
+ * NoIP
  *
  * This contains code to send a message to a dynamic dns service such as no-ip.com
  * to register the IP address of this device.
@@ -44,6 +51,15 @@
  *	userid:password			<-- substitute your own
  *	dXNlcmlkOnBhc3N3b3JkCg==	<-- this output is what you need
  *	acer: {2} 
+ */
+
+/*
+ * ClouDNS
+ *
+ * Just query
+ *    https://ipv4.cloudns.net/api/dynamicURL/?q=AUTH
+ * where AUTH is a string provided by ClouDNS.net when creating this DNS entry.
+ * Return value is "OK" in case of success.
  */
 
 #include <Arduino.h>
@@ -86,6 +102,11 @@ void Dyndns::setAuth(const char *auth) {
   this->auth = (char *)auth;
 }
 
+/*
+ * This method does the work
+ *
+ * Somewhat more generalized, as the two sites supported differ in setup
+ */
 boolean Dyndns::update() {
   char *query, *header = 0;
   int len;
