@@ -300,7 +300,15 @@ void Acme::loop(time_t now) {
 static int process_count = 5;
 
 void Acme::AcmeProcess() {
+  /*
+   * Note keep the two checks in this order.
+   * If directory == 0 we only print limited number of error messages.
+   */
   if (process_count-- < 0) {
+    return;
+  }
+  if (directory == 0) {
+    ESP_LOGE(acme_tag, "%s: no directory", __FUNCTION__);
     return;
   }
 
@@ -1230,6 +1238,10 @@ void Acme::ClearChallenge() {
  * Read from file
  */
 boolean Acme::ReadAccountInfo() {
+  if (account_fn == 0 || filename_prefix == 0) {
+    ESP_LOGE(acme_tag, "%s: ACME files not configured", __FUNCTION__);
+    return false;
+  }
   char *fn = (char *)malloc(strlen(account_fn) + 5 + strlen(filename_prefix));
   sprintf(fn, "%s/%s", filename_prefix, account_fn);
 
