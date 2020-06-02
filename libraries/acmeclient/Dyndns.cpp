@@ -111,6 +111,7 @@ boolean Dyndns::update() {
   char *query, *header = 0;
   int len;
   boolean ok = false;
+  // boolean https;
 
   if (provider == DD_NOIP) {
     if (ip != 0)
@@ -142,6 +143,9 @@ boolean Dyndns::update() {
       sprintf(query, get_template3, auth);
   }
   ESP_LOGD(dyndns_tag, "Query %s", query);
+
+  // Secure connection ?
+  // https = (strncasecmp(query, "https", 5) == 0);
 
   // Do it
   http_config.url = query;

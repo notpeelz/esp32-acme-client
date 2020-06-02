@@ -93,7 +93,6 @@ class Acme {
 
     void OrderStart();				// Debug
     void ChallengeStart();			// Debug
-    void ListFiles();				// Debug
 
   private:
     constexpr const static char *acme_tag = "Acme";	// For ESP_LOGx calls
@@ -248,6 +247,7 @@ class Acme {
     void	SetAcmeUserAgentHeader(esp_http_client_handle_t);
 
     void	ReadCertificate();		// From local file
+    void	CreateDirectories(const char *path);
 
     // Forward declarations
     struct Directory;

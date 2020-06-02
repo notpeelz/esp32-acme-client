@@ -46,9 +46,7 @@
 #include <mbedtls/x509_csr.h>
 #include <esp_http_client.h>
 
-// I'd like to avoid these ..
-#include "SPIFFS.h"
-#include "FS.h"
+#include <dirent.h>
 
 /*
  * CTOR / DTOR
@@ -921,6 +919,45 @@ mbedtls_pk_context *Acme::ReadPrivateKey(const char *ifn) {
 }
 
 /*
+ * Check (and create) directories in the path
+ * This becomes sensible on a real filesystem like LittleFS (not on SPIFFS).
+ */
+void Acme::CreateDirectories(const char *path) {
+  char *dir = strdup(path);
+
+  ESP_LOGI(acme_tag, "%s(%s)", __FUNCTION__, dir);
+
+  // Walk from the beginning to the end of the path
+
+  int len = strlen(dir);
+  for (int i=1; i<len; i++)
+    if (dir[i] == '/') {
+      // Temporarily terminate path here
+      dir[i] = 0;
+
+      // If this directory doesn't exist, create it
+      DIR *dp = opendir(dir);
+      if (dp == 0) {
+        int err = mkdir(dir, 0777);
+        if (err == ESP_OK) {
+	  ESP_LOGI(acme_tag, "%s: created directory %s", __FUNCTION__, dir);
+        } else {
+	  ESP_LOGE(acme_tag, "%s: failed to create directory %s, %d %s", __FUNCTION__, dir,
+	    err, esp_err_to_name(err));
+	  return;
+        }
+      } else {
+        ESP_LOGI(acme_tag, "%s : %s exists", __FUNCTION__, dir);
+	closedir(dp);
+      }
+
+      // Restore path
+      dir[i] = '/';
+    }
+  free(dir);
+}
+
+/*
  * Write a private key to a file, caller can specify file name.
  * Prepends our path prefix prior to use.
  */
@@ -929,6 +966,7 @@ void Acme::WritePrivateKey(mbedtls_pk_context *pk, const char *ifn) {
   char *fn = (char *)malloc(fnlen);
   sprintf(fn, "%s/%s", filename_prefix, ifn);
 
+  CreateDirectories(fn);
   FILE *f = fopen(fn, "w");
   if (f == 0) {
     ESP_LOGE(acme_tag, "%s: could not write private key to file %s", __FUNCTION__, fn);
@@ -989,6 +1027,7 @@ void Acme::WritePrivateKey() {
   char *fn = (char *)malloc(fnlen);
   sprintf(fn, "%s/%s", filename_prefix, account_key_fn);
 
+  CreateDirectories(fn);
   FILE *f = fopen(fn, "w");
   if (f) {
     fwrite(keystring, 1, len, f);
@@ -1303,6 +1342,7 @@ void Acme::WriteAccountInfo() {
 
   char *fn = (char *)malloc(strlen(account_fn) + 5 + strlen(filename_prefix));
   sprintf(fn, "%s/%s", filename_prefix, account_fn);
+  CreateDirectories(fn);
   FILE *f = fopen(fn, "w");
   if (f == NULL) {
     ESP_LOGE(acme_tag, "Could not write account info into %s, %s", fn, strerror(errno));
@@ -1486,6 +1526,7 @@ void Acme::WriteOrderInfo() {
 
   char *fn = (char *)malloc(strlen(order_fn) + 5 + strlen(filename_prefix));
   sprintf(fn, "%s/%s", filename_prefix, order_fn);
+  CreateDirectories(fn);
   FILE *f = fopen(fn, "w");
   if (f == NULL) {
     ESP_LOGE(acme_tag, "Could write order info into %s, %s", fn, strerror(errno));
@@ -2337,33 +2378,13 @@ void Acme::OrderRemove(char *dir) {
   if (order_fn == 0)
     return;
 
-  SPIFFS.begin();
+  ESP_LOGI(acme_tag, "%s(%s,%s)", __FUNCTION__, dir, order_fn);
 
-  if (SPIFFS.remove(order_fn))
+  int err = unlink(dir);
+  if (err == ESP_OK)
     ESP_LOGI(acme_tag, "Removed %s", order_fn);
   else
     ESP_LOGE(acme_tag, "Failed to remove %s", order_fn);
-
-  SPIFFS.end();
-}
-
-void Acme::ListFiles() {
-  SPIFFS.begin();
-
-  File root = SPIFFS.open("/");
-  if (!root) {
-    ESP_LOGE(acme_tag, "Failed to open /");
-  } else if (!root.isDirectory()) {
-    ESP_LOGE(acme_tag, "/ is not a directory");
-  } else {
-    File file = root.openNextFile();
-    while (file) {
-      ESP_LOGI(acme_tag, "File: %s size %d", file.name(), file.size());
-      file = root.openNextFile();
-    }
-  }
-
-  SPIFFS.end();
 }
 
 void Acme::CertificateDownload() {
