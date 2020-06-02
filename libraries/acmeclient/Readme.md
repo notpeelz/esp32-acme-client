@@ -61,7 +61,7 @@ API :
     void setAccountKeyFilename(const char *);		File name on esp32 local storage for the account private key, e.g. account.pem
     void setOrderFilename(const char *);		File name on esp32 local storage for the order, e.g. order.json
     void setCertKeyFilename(const char *);		File name on esp32 local storage for the certificate private key, e.g. certkey.pem
-    void setFilenamePrefix(const char *);		Prefix for filesystem on esp32, e.g. /spiffs
+    void setFilenamePrefix(const char *);		Prefix for filesystem on esp32, e.g. /fs
     void setCertificateFilename(const char *);		File name on esp32 local storage for the certificate, e.g. certificate.pem
 
     void setFtpServer(const char *);			For your local FTP server : hostname / ip address
@@ -93,4 +93,6 @@ API :
 
 This class relies on modules provided with ESP-IDF :
 - mbedtls
-- vfs (filesystem access, and underlying SPIFFS)
+- vfs (filesystem access, and underlying filesystem)
+- LittleFS (https://github.com/ARMmbed/littlefs.git and https://github.com/joltwallet/esp_littlefs.git) recommended
+  as such a filesystem, not SPIFFS (popular but lacks functionality).
