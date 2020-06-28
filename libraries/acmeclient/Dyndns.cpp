@@ -157,8 +157,8 @@ boolean Dyndns::update() {
   }
   if (provider == DD_NOIP)
     esp_http_client_set_header(http_client, hdr_header, header);
-  if (provider == DD_CLOUDNS)
-    buf = (char *)malloc(80);
+
+  buf = (char *)malloc(80);
 
   // GET
   esp_err_t err = esp_http_client_perform(http_client);
